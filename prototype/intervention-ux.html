@@ -1,0 +1,431 @@
+<!doctype html>
+<!--
+  PROTOTYPE — THROWAWAY. Delete or fold the winner into the real cockpit when answered.
+  Question: which attention posture should Loopwatch's intervention UX take?
+  Five variants on one "desktop", switchable via ?variant= and the floating bottom bar:
+    invisible · ambient · cockpit · embedded · layered
+  One shared scenario drives them all: Codex is drifting on an auth task.
+  Run:  open prototype/intervention-ux.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Loopwatch — intervention UX prototype</title>
+<style>
+  :root{
+    --bg0:#0a0e13; --bg1:#11161d; --panel:#161c24; --panel2:#1b232d;
+    --line:#242e3a; --line2:#2e3a48;
+    --text:#cdd8e6; --muted:#7c8a9e; --faint:#566273;
+    --calm:#34d399; --watch:#f5b14b; --intv:#f0606a; --accent:#6ea8fe;
+    --mono:"SF Mono",ui-monospace,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    font-family:var(--sans); color:var(--text);
+    background:radial-gradient(1200px 700px at 70% -10%, #16202c 0%, var(--bg1) 45%, var(--bg0) 100%);
+    overflow:hidden;
+  }
+  /* ---------- desktop frame ---------- */
+  #menubar{
+    height:30px; display:flex; align-items:center; gap:14px;
+    padding:0 14px; font-size:13px; color:#aeb9c8;
+    background:rgba(16,22,30,.72); backdrop-filter:blur(14px);
+    border-bottom:1px solid var(--line);
+    position:relative; z-index:40;
+  }
+  #menubar .logo{font-weight:700;color:#e7eef7}
+  #menubar .mi{color:var(--muted)}
+  #menubar .spacer{flex:1}
+  .ambient{
+    display:none; align-items:center; gap:8px; cursor:pointer;
+    padding:3px 10px; border-radius:999px; font-size:12px;
+    border:1px solid var(--line2); background:#131922;
+  }
+  .ambient.show{display:inline-flex}
+  .ambient:hover{border-color:#3a4a5c}
+  .ambient .dot{width:8px;height:8px;border-radius:50%}
+  .ambient .pulse{animation:pulse 1.4s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  #stage{position:relative; height:calc(100% - 30px)}
+
+  /* faux agent terminal window */
+  .term{
+    position:absolute; left:50%; top:46px; transform:translateX(-50%);
+    width:min(720px,86vw); height:min(440px,64vh);
+    background:#0c1117; border:1px solid var(--line2); border-radius:11px;
+    box-shadow:0 30px 80px rgba(0,0,0,.55); overflow:hidden; display:flex; flex-direction:column;
+  }
+  .term .tbar{height:34px;display:flex;align-items:center;gap:8px;padding:0 12px;
+    background:#11171f;border-bottom:1px solid var(--line)}
+  .term .tbtn{width:11px;height:11px;border-radius:50%}
+  .term .tt{margin-left:8px;font-size:12px;color:var(--muted)}
+  .term .body{flex:1;overflow:auto;padding:12px 14px;font-family:var(--mono);font-size:12.5px;line-height:1.65}
+  .term .body .cmd{color:#9fc4ff}
+  .term .body .ok{color:var(--calm)}
+  .term .body .bad{color:var(--intv)}
+  .term .body .dim{color:var(--faint)}
+  .term .body .step{color:#9aa7b8}
+  /* embedded inline warning */
+  .embed{
+    margin:10px 0 2px; border:1px solid #5a3030; background:#1d1416; border-left:3px solid var(--intv);
+    border-radius:8px; padding:9px 11px; font-family:var(--sans); font-size:12.5px; display:none;
+  }
+  .embed.show{display:block; animation:slidein .35s ease}
+  .embed .h{color:#ff9aa2;font-weight:600;margin-bottom:3px}
+  .embed .acts{margin-top:7px;display:flex;gap:8px}
+
+  /* ---------- OS notification ---------- */
+  #notewrap{position:absolute; top:14px; right:16px; width:340px; z-index:60;
+    display:flex; flex-direction:column; gap:10px}
+  .note{
+    background:rgba(22,28,36,.92); backdrop-filter:blur(16px);
+    border:1px solid var(--line2); border-left:3px solid var(--intv);
+    border-radius:12px; padding:12px 13px; box-shadow:0 18px 50px rgba(0,0,0,.5);
+    animation:slidein .4s cubic-bezier(.2,.9,.3,1);
+  }
+  @keyframes slidein{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:none}}
+  .note .top{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted);margin-bottom:6px}
+  .note .src{margin-left:auto;font-family:var(--mono)}
+  .note .h{font-weight:650;font-size:13.5px;color:#f2f6fb;margin-bottom:4px}
+  .note .ev{font-size:12px;color:var(--muted);line-height:1.5}
+  .note .acts{margin-top:10px;display:flex;gap:8px}
+
+  /* ---------- popover (ambient) ---------- */
+  #pop{position:absolute; top:34px; right:16px; width:300px; z-index:55; display:none;
+    background:var(--panel); border:1px solid var(--line2); border-radius:12px; overflow:hidden;
+    box-shadow:0 18px 50px rgba(0,0,0,.5)}
+  #pop.show{display:block; animation:slidein .25s ease}
+  #pop .ph{padding:9px 12px;font-size:11px;color:var(--muted);border-bottom:1px solid var(--line);
+    text-transform:uppercase;letter-spacing:.5px}
+  .prow{display:flex;align-items:center;gap:9px;padding:9px 12px;border-bottom:1px solid var(--line);font-size:12.5px}
+  .prow:last-child{border-bottom:0}
+  .prow .dot{width:8px;height:8px;border-radius:50%}
+  .prow .meta{color:var(--faint);margin-left:auto;font-family:var(--mono);font-size:11px}
+
+  /* ---------- full cockpit ---------- */
+  #cockpit{position:absolute; inset:0; z-index:50; display:none; grid-template-columns:240px 1fr 290px;
+    background:var(--bg1)}
+  #cockpit.show{display:grid}
+  #cockpit.overlay{inset:46px 4vw; border:1px solid var(--line2); border-radius:14px; overflow:hidden;
+    box-shadow:0 40px 120px rgba(0,0,0,.6)}
+  .ck-col{overflow:auto}
+  .ck-rail{border-right:1px solid var(--line);background:#131922}
+  .ck-mid{background:var(--bg1)}
+  .ck-insp{border-left:1px solid var(--line);background:#131922}
+  .ck-h{padding:11px 13px;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;
+    border-bottom:1px solid var(--line);position:sticky;top:0;background:inherit;z-index:2}
+  .srow{padding:10px 13px;border-bottom:1px solid var(--line);cursor:pointer}
+  .srow:hover{background:#161e28}
+  .srow.active{background:#172230;box-shadow:inset 2px 0 0 var(--accent)}
+  .srow .l1{display:flex;align-items:center;gap:8px;font-size:12.5px}
+  .srow .src{font-weight:600}
+  .srow .dot{width:8px;height:8px;border-radius:50%}
+  .srow .st{margin-left:auto;font-size:10.5px;font-family:var(--mono)}
+  .srow .l2{margin-top:4px;font-size:11px;color:var(--muted);font-family:var(--mono)}
+  .srow .badges{margin-top:6px;display:flex;flex-wrap:wrap;gap:4px}
+  .badge{font-size:9.5px;padding:1px 6px;border-radius:5px;border:1px solid var(--line2);color:var(--faint)}
+  .badge.on{color:#bcd0e6;border-color:#3a4a5c}
+  /* timeline lanes */
+  .lane{display:grid;grid-template-columns:96px 1fr;border-bottom:1px solid var(--line)}
+  .lane .ln{padding:9px 12px;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;
+    border-right:1px solid var(--line);background:#121922}
+  .lane .lc{padding:9px 12px;font-size:12px;font-family:var(--mono);color:#a9b6c6;line-height:1.7}
+  .pill{display:inline-block;font-size:11px;padding:1px 7px;border-radius:5px;margin:1px 0}
+  .pill.bad{background:#2a1518;color:#ff9aa2}
+  .pill.ok{background:#11261d;color:#8fe7bf}
+  .pill.warn{background:#2a2310;color:#ffd591}
+  .insp-card{margin:11px 13px;padding:11px;border:1px solid var(--line2);border-radius:9px;background:#10171f}
+  .insp-card .t{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:7px}
+  .insp-card .row{font-size:12px;font-family:var(--mono);color:#aab7c7;display:flex;justify-content:space-between;
+    padding:3px 0;border-bottom:1px dashed var(--line)}
+  .insp-card .row:last-child{border-bottom:0}
+
+  /* ---------- shared button ---------- */
+  .btn{font-family:var(--sans);font-size:11.5px;padding:5px 11px;border-radius:7px;cursor:pointer;
+    border:1px solid var(--line2);background:#1a2330;color:#cdd8e6}
+  .btn:hover{border-color:#3f5163;background:#1f2a39}
+  .btn.primary{background:#1f3147;border-color:#2f4d6e;color:#cfe3ff}
+  .btn.ghost{background:transparent}
+
+  /* empty-state caption per variant */
+  .caption{position:absolute;left:50%;bottom:78px;transform:translateX(-50%);max-width:560px;text-align:center;
+    font-size:12.5px;color:var(--faint);line-height:1.6;z-index:30}
+  .caption b{color:#9fb0c4}
+
+  /* ---------- floating switcher (obviously not part of the design) ---------- */
+  #switch{position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:100;
+    display:flex;align-items:center;gap:4px;background:#e9eef5;color:#0c1219;border-radius:999px;
+    padding:5px 6px;box-shadow:0 12px 36px rgba(0,0,0,.5);font-family:var(--sans)}
+  #switch button{border:0;background:transparent;color:#0c1219;font-size:15px;cursor:pointer;
+    width:30px;height:30px;border-radius:50%}
+  #switch button:hover{background:#d2dae5}
+  #switch .lbl{font-size:12.5px;font-weight:600;min-width:184px;text-align:center;padding:0 6px}
+  #switch .lbl small{display:block;font-weight:500;color:#566273;font-size:10.5px}
+  #switch .trig{background:#0c1219;color:#fff;font-weight:600;font-size:11.5px;width:auto;
+    padding:0 13px;height:30px;border-radius:999px;margin-left:6px}
+  #switch .trig:hover{background:#1c2733}
+</style>
+</head>
+<body>
+  <div id="menubar">
+    <span class="logo">●</span>
+    <span class="mi">Codex</span><span class="mi">File</span><span class="mi">Edit</span><span class="mi">View</span>
+    <span class="spacer"></span>
+    <span id="ambient" class="ambient" onclick="togglePop()">
+      <span class="dot" style="background:var(--intv)"></span>
+      <span id="amb-text">Loopwatch · 5 · <span style="color:var(--intv)">⚠ 1</span></span>
+    </span>
+    <span class="mi" style="font-family:var(--mono)">10:42</span>
+  </div>
+
+  <div id="stage">
+    <!-- agent terminal -->
+    <div class="term" id="term">
+      <div class="tbar">
+        <span class="tbtn" style="background:#f0606a"></span>
+        <span class="tbtn" style="background:#f5b14b"></span>
+        <span class="tbtn" style="background:#34d399"></span>
+        <span class="tt">codex — acme-api — fix/auth-test</span>
+      </div>
+      <div class="body" id="termbody"></div>
+    </div>
+
+    <!-- ambient popover -->
+    <div id="pop">
+      <div class="ph">Active sessions</div>
+      <div id="poplist"></div>
+    </div>
+
+    <!-- OS notifications -->
+    <div id="notewrap"></div>
+
+    <!-- full cockpit -->
+    <div id="cockpit">
+      <div class="ck-col ck-rail">
+        <div class="ck-h">Sessions · grouped by repo</div>
+        <div id="rail"></div>
+      </div>
+      <div class="ck-col ck-mid">
+        <div class="ck-h" id="midh">Active session timeline</div>
+        <div id="timeline"></div>
+      </div>
+      <div class="ck-col ck-insp">
+        <div class="ck-h">Evidence</div>
+        <div id="insp"></div>
+      </div>
+    </div>
+
+    <div class="caption" id="caption"></div>
+  </div>
+
+  <!-- floating switcher -->
+  <div id="switch">
+    <button onclick="cycle(-1)" title="Previous (←)">‹</button>
+    <div class="lbl" id="swlbl"></div>
+    <button onclick="cycle(1)" title="Next (→)">›</button>
+    <button class="trig" onclick="trigger()" title="Replay the drift alert">▶ Trigger</button>
+  </div>
+
+<script>
+const VARIANTS = [
+  ['invisible','Invisible until it pings','No persistent UI — only an OS notification when something needs you.'],
+  ['ambient','Ambient glance','A always-there menu-bar pulse you can glance at. Click to peek.'],
+  ['cockpit','Full cockpit','A rich dashboard you keep open and actively watch.'],
+  ['embedded','Embedded in your terminal','The warning appears where you already work, next to the agent.'],
+  ['layered','Layered by severity','Ambient pulse → OS notification → full cockpit, escalating with severity.'],
+];
+const SESSIONS = [
+  {src:'Codex', repo:'acme-api', branch:'fix/auth-test', task:'Fix failing auth test', phase:'editing',
+   elapsed:'42m', tokens:'38K', changed:6, status:'intervention', focus:true,
+   signal:'Validation is weaker than the change. 4 failed `pnpm test` in 42m, no passing check, diff still growing.',
+   caps:{transcript:1,tools:1,tokens:1,cost:1,diag:1}},
+  {src:'Claude', repo:'acme-api', branch:'chore/deps', task:'Bump dependencies', phase:'summarizing',
+   elapsed:'21m', tokens:'15K', changed:11, status:'watch',
+   signal:'Scope creep: 11 files touched for a dependency bump.',
+   caps:{transcript:1,tools:1,tokens:0,cost:0,diag:0}},
+  {src:'Claude', repo:'acme-web', branch:'feat/onboarding', task:'Add onboarding tooltips', phase:'validating',
+   elapsed:'12m', tokens:'9K', changed:3, status:'calm', caps:{transcript:1,tools:1,tokens:0,cost:0,diag:0}},
+  {src:'Pi', repo:'sumocode', branch:'main', task:'Refactor diagnostics writer', phase:'reading',
+   elapsed:'4m', tokens:'2K', changed:0, status:'calm', caps:{transcript:1,tools:1,tokens:1,cost:1,diag:1}},
+  {src:'Codex', repo:'infra', branch:'main', task:'Write deploy script', phase:'editing',
+   elapsed:'7m', tokens:'5K', changed:2, status:'calm', caps:{transcript:1,tools:1,tokens:1,cost:1,diag:0}},
+];
+const COLOR = {calm:'var(--calm)', watch:'var(--watch)', intervention:'var(--intv)'};
+const focus = SESSIONS.find(s=>s.focus);
+
+const TERM_LINES = [
+  ['cmd','$ codex "fix the failing auth test"'],
+  ['step','• read  src/auth.ts'],
+  ['step','• read  tests/auth.test.ts'],
+  ['step','• edit  src/auth.ts        (token-refresh branch)'],
+  ['cmd','$ pnpm test auth'],
+  ['bad','✗ 1 failing — expected 401, received 200'],
+  ['step','• edit  src/auth.ts        (added guard clause)'],
+  ['cmd','$ pnpm test auth'],
+  ['bad','✗ 1 failing — expected 401, received 200'],
+  ['step','• edit  tests/auth.test.ts (loosened assertion)'],
+  ['cmd','$ pnpm test auth'],
+  ['bad','✗ 1 failing — expected 401, received 200'],
+  ['step','• read  src/middleware/session.ts'],
+  ['cmd','$ pnpm test auth'],
+  ['bad','✗ 1 failing — expected 401, received 200'],
+  ['dim','… 42m elapsed · 38K tokens · 6 files changed · no passing check'],
+];
+
+const qs = new URLSearchParams(location.search);
+let current = qs.get('variant') || 'layered';
+if(!VARIANTS.some(v=>v[0]===current)) current='layered';
+let fired = false;
+
+function el(id){return document.getElementById(id)}
+
+function renderTerm(){
+  const b = el('termbody'); b.innerHTML='';
+  TERM_LINES.forEach(([c,t])=>{ const d=document.createElement('div'); d.className=c; d.textContent=t; b.appendChild(d); });
+  // embedded warning slot
+  const e=document.createElement('div'); e.className='embed'; e.id='embed';
+  e.innerHTML=`<div class="h">◉ Loopwatch — Codex may be drifting</div>
+    <div>4 failed <code>pnpm test</code> in 42m, no passing check. Validation is weaker than the change requires.</div>
+    <div class="acts"><button class="btn primary" onclick="openCockpit()">Open evidence</button>
+    <button class="btn ghost" onclick="dismissAll()">Dismiss</button></div>`;
+  b.appendChild(e);
+  b.scrollTop = b.scrollHeight;
+}
+
+function renderRail(){
+  const r=el('rail'); r.innerHTML='';
+  SESSIONS.forEach((s,i)=>{
+    const row=document.createElement('div');
+    row.className='srow'+(s.focus?' active':'');
+    const caps=Object.entries(s.caps).map(([k,v])=>`<span class="badge ${v?'on':''}">${k}</span>`).join('');
+    row.innerHTML=`<div class="l1"><span class="dot" style="background:${COLOR[s.status]}"></span>
+      <span class="src">${s.src}</span><span style="color:var(--muted)">${s.repo}</span>
+      <span class="st" style="color:${COLOR[s.status]}">${s.status}</span></div>
+      <div class="l2">${s.branch} · ${s.phase} · ${s.elapsed} · ${s.tokens} · ${s.changed} files</div>
+      <div class="badges">${caps}</div>`;
+    r.appendChild(row);
+  });
+}
+function renderTimeline(){
+  el('midh').textContent = `${focus.src} · ${focus.repo} — ${focus.task}`;
+  const lanes=[
+    ['Request',`<span class="pill">"${focus.task}"</span>`],
+    ['Tools',`14 reads · 5 edits · <span class="pill bad">4× pnpm test failed</span>`],
+    ['Files',`src/auth.ts <span class="pill warn">churned ×3</span> · tests/auth.test.ts · session.ts`],
+    ['Validation',`<span class="pill bad">no passing check</span> — last 4 runs failed identically`],
+    ['Convergence',`<span class="pill bad">burn</span> <span class="pill bad">weak validation</span> <span class="pill warn">churn</span>`],
+  ];
+  el('timeline').innerHTML = lanes.map(([n,c])=>`<div class="lane"><div class="ln">${n}</div><div class="lc">${c}</div></div>`).join('');
+}
+function renderInsp(){
+  el('insp').innerHTML=`
+    <div class="insp-card"><div class="t">Repeated failure</div>
+      <div class="row"><span>pnpm test auth</span><span class="pill bad">×4</span></div>
+      <div class="row"><span>expected 401</span><span>received 200</span></div></div>
+    <div class="insp-card"><div class="t">Diff summary</div>
+      <div class="row"><span>src/auth.ts</span><span>+38 −12</span></div>
+      <div class="row"><span>tests/auth.test.ts</span><span>assertion changed</span></div></div>
+    <div class="insp-card"><div class="t">Why this fired</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.55">${focus.signal}</div></div>
+    <div class="insp-card"><div class="t">Suggested action</div>
+      <div style="font-size:12px;color:#bcd0e6;line-height:1.55">Inspect the 401→200 expectation before more time burns — the test, not the code, may be wrong.</div></div>`;
+}
+function renderPop(){
+  el('poplist').innerHTML = SESSIONS.map(s=>`<div class="prow">
+    <span class="dot" style="background:${COLOR[s.status]}"></span>
+    <span><b>${s.src}</b> <span style="color:var(--muted)">${s.repo}</span></span>
+    <span class="meta">${s.elapsed}</span></div>`).join('');
+}
+
+function makeNote(){
+  return `<div class="note"><div class="top">◉ Loopwatch · intervention
+    <span class="src">${focus.src} · ${focus.repo}</span></div>
+    <div class="h">Agent session may need attention</div>
+    <div class="ev">${focus.signal}</div>
+    <div class="acts"><button class="btn primary" onclick="openCockpit()">Open evidence</button>
+      <button class="btn ghost" onclick="dismissAll()">Dismiss</button></div></div>`;
+}
+
+/* ---- variant application ---- */
+function applyVariant(){
+  // reset surfaces
+  el('ambient').classList.toggle('show', current==='ambient'||current==='layered');
+  el('pop').classList.remove('show');
+  el('notewrap').innerHTML='';
+  el('cockpit').className='';
+  document.getElementById('embed').classList.remove('show');
+  el('term').style.display = (current==='cockpit') ? 'none' : 'flex';
+
+  if(current==='cockpit'){ openCockpit(true); }
+
+  const v=VARIANTS.find(x=>x[0]===current);
+  el('caption').innerHTML = `<b>${v[1]}.</b> ${v[2]}<br>Hit <b>▶ Trigger</b> to replay the moment Codex's drift crosses the line.`;
+  // switcher label
+  const idx=VARIANTS.findIndex(x=>x[0]===current);
+  el('swlbl').innerHTML = `${current} <small>${idx+1}/5 · ${v[1]}</small>`;
+  fired=false;
+}
+
+function trigger(){
+  fired=true;
+  if(current==='invisible' || current==='layered'){
+    el('notewrap').innerHTML = makeNote();
+  }
+  if(current==='ambient' || current==='layered'){
+    el('ambient').classList.add('show');
+    el('ambient').querySelector('.dot').classList.add('pulse');
+    togglePop(true);
+  }
+  if(current==='embedded'){
+    const e=document.getElementById('embed'); e.classList.add('show');
+    el('termbody').scrollTop = el('termbody').scrollHeight;
+  }
+  if(current==='cockpit'){
+    openCockpit(true);
+  }
+}
+
+function openCockpit(asBase){
+  const c=el('cockpit');
+  c.className = asBase && current==='cockpit' ? 'show' : 'show overlay';
+  renderRail(); renderTimeline(); renderInsp();
+  if(!asBase || current!=='cockpit') el('pop').classList.remove('show');
+}
+function dismissAll(){
+  el('notewrap').innerHTML='';
+  el('pop').classList.remove('show');
+  document.getElementById('embed').classList.remove('show');
+  el('ambient').querySelector('.dot').classList.remove('pulse');
+  if(current!=='cockpit') el('cockpit').className='';
+}
+let popOpen=false;
+function togglePop(force){
+  popOpen = force===true ? true : !popOpen;
+  el('pop').classList.toggle('show', popOpen);
+  if(popOpen) renderPop();
+}
+
+function setVariant(v){
+  current = v;
+  try{ history.replaceState(null,'',`?variant=${current}`); }catch(_){ /* sandboxed preview blocks URL writes — ignore */ }
+  dismissAll(); applyVariant();
+}
+function cycle(d){
+  const idx=VARIANTS.findIndex(x=>x[0]===current);
+  setVariant(VARIANTS[(idx+d+VARIANTS.length)%VARIANTS.length][0]);
+}
+document.addEventListener('keydown',e=>{
+  const t=e.target.tagName; if(t==='INPUT'||t==='TEXTAREA'||e.target.isContentEditable) return;
+  if(e.key==='ArrowLeft') cycle(-1);
+  if(e.key==='ArrowRight') cycle(1);
+  if(e.key===' '){ e.preventDefault(); trigger(); }
+});
+
+renderTerm(); renderRail(); renderTimeline(); renderInsp(); applyVariant();
+</script>
+</body>
+</html>
