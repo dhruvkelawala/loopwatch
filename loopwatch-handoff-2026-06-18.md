@@ -8,7 +8,7 @@ Working name: **Loopwatch**. Rename later if desired.
 
 Earlier baseline handoff from the prior session:
 
-`/var/folders/jy/3j8rk22d6cg47dgvfjs016gw0000gn/T/handoff-XXXXXX.md.P0J3QiygcQ`
+_(an earlier local temp handoff — not committed to this repo)_
 
 That earlier document covered the initial product summary, why Flue fits, tech stack, MVP scope, out-of-scope items, open questions, and suggested next skills. This handoff captures the newer research and product decisions made after the user challenged the initial conservative take.
 
@@ -90,14 +90,14 @@ Local surfaces inspected:
 - `~/.pi/agent/sessions/**/*.jsonl`
 - `~/.pi/agent`
 - `~/.pi/pi-acp/session-map.json`
-- SumoCode repo: `/Volumes/SumoDeus NVMe/code/sumocode`
+- SumoCode repo (local checkout)
 
 Relevant local files:
 
-- `/Volumes/SumoDeus NVMe/code/sumocode/README.md`
-- `/Volumes/SumoDeus NVMe/code/sumocode/docs/PI_TOOL_ARCHITECTURE.md`
-- `/Volumes/SumoDeus NVMe/code/sumocode/src/sumo-tui/runtime/diagnostics.ts`
-- `/Volumes/SumoDeus NVMe/code/sumocode/bin/sumocode.sh`
+- `sumocode/README.md`
+- `sumocode/docs/PI_TOOL_ARCHITECTURE.md`
+- `sumocode/src/sumo-tui/runtime/diagnostics.ts`
+- `sumocode/bin/sumocode.sh`
 
 Findings:
 
