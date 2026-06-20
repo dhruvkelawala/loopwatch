@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Loopwatch freshness / cadence spike  (PRD §12.1, §13 step 1).
+Loopwatch freshness / cadence spike  (PRD §12.1, §13 step 1; ADR-0009).
 
 The open risk: Loopwatch's "real-time" promise is only as fresh as each agent
 flushes its JSONL to disk. This probe characterizes that.
@@ -11,9 +11,14 @@ Two modes:
               event timing / burstiness — a proxy for how fresh passive observation
               can be, and a direct input to tuning the judge's debounce / rate cap.
 
-  --watch F   LIVE mode: tail file F and print wall-clock latency between appends.
-              Run this WHILE an agent session is active to measure true flush lag
-              (the number that actually validates or breaks the freshness assumption).
+  --watch F   LIVE mode: tail file F and measure TRUE FLUSH LAG — the wall-clock
+              delay between an event's own timestamp (when the agent created it)
+              and the moment its bytes become visible to an outside reader. This
+              is the number that actually validates or breaks the freshness
+              assumption. Run this WHILE an agent session is active.
+
+              Optionally: --duration SECONDS (auto-stop) and --out FILE (append a
+              machine-readable summary block).
 
 Reads only record timestamps and byte counts — never message / tool content.
 """
@@ -83,24 +88,153 @@ def analyze():
               f'>300s: {sum(g > 300 for g in gaps)}')
 
 
-def watch(path):
+def guess_source(path):
+    p = os.path.expanduser(path)
+    for name, root in SOURCES.items():
+        if os.path.expanduser(root) in p:
+            return name
+    return 'unknown'
+
+
+def _pct(sorted_vals, pct):
+    if not sorted_vals:
+        return float('nan')
+    return sorted_vals[min(len(sorted_vals) - 1, int(len(sorted_vals) * pct))]
+
+
+def summarize(path, src, t_start, t_end, appends, lags):
+    dur = t_end - t_start
+    n_appends = len(appends)
+    n_bytes = sum(a[0] for a in appends)
+    n_recs = sum(a[1] for a in appends)
+    slags = sorted(lags)
+    lines = []
+    lines.append('=== FLUSH-LAG-SUMMARY ===')
+    lines.append(f'source={src}')
+    lines.append(f'file={os.path.basename(path)}')
+    lines.append(f'wall_duration_s={dur:.1f}')
+    lines.append(f'appends={n_appends}')
+    lines.append(f'bytes_appended={n_bytes}')
+    lines.append(f'records_with_ts={n_recs}')
+    if slags:
+        lines.append(f'lag_min_s={slags[0]:.3f}')
+        lines.append(f'lag_median_s={statistics.median(slags):.3f}')
+        lines.append(f'lag_p90_s={_pct(slags, 0.9):.3f}')
+        lines.append(f'lag_p99_s={_pct(slags, 0.99):.3f}')
+        lines.append(f'lag_max_s={slags[-1]:.3f}')
+        lines.append(f'lag_gt_1s={sum(x > 1 for x in slags)}')
+        lines.append(f'lag_gt_5s={sum(x > 5 for x in slags)}')
+        lines.append(f'lag_gt_30s={sum(x > 30 for x in slags)}')
+    else:
+        lines.append('lag=NO_TIMESTAMPED_RECORDS')
+    lines.append('=== END ===')
+    return '\n'.join(lines)
+
+
+def watch(path, duration=None, out=None, poll=0.1):
     path = os.path.expanduser(path)
-    print(f'watching {path} for append latency (Ctrl-C to stop)')
-    last = os.path.getsize(path) if os.path.exists(path) else 0
-    t0 = time.time()
-    while True:
-        time.sleep(0.25)
-        if not os.path.exists(path):
-            continue
-        sz = os.path.getsize(path)
-        if sz > last:
+    src = guess_source(path)
+    print(f'watching {path}')
+    dur_lbl = 'unlimited' if not duration else f'{duration}s'
+    print(f'source={src}  duration={dur_lbl}  out={out or "-"}  (Ctrl-C to stop)')
+    def _size():
+        # Tolerate transient ENOENT: some sources momentarily drop the path
+        # during atomic write-rename. Retry briefly before treating as gone.
+        for _ in range(10):
+            try:
+                return os.path.getsize(path)
+            except OSError:
+                time.sleep(0.02)
+        return None
+
+    last = _size() or 0
+    lags = []
+    appends = []
+    t_start = time.time()
+    deadline = t_start + duration if duration else None
+    try:
+        while True:
+            time.sleep(poll)
             now = time.time()
-            print(f'  +{sz - last} bytes after {now - t0:.2f}s idle')
-            last, t0 = sz, now
+            if deadline and now >= deadline:
+                break
+            sz = _size()
+            if sz is None:
+                continue
+            if sz < last:
+                # file truncated / rotated (new session) -> re-anchor at 0
+                last = 0
+                continue
+            if sz > last:
+                rec_ts = []
+                try:
+                    with open(path, 'rb') as fh:
+                        fh.seek(last)
+                        chunk = fh.read(sz - last)
+                except OSError:
+                    chunk = b''
+                wall = time.time()  # the moment these bytes are visible to us
+                for line in chunk.splitlines():
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except Exception:
+                        continue
+                    if isinstance(rec, dict):
+                        t = parse_ts(rec.get('timestamp'))
+                        if t:
+                            rec_ts.append(t)
+                new_lags = [wall - t for t in rec_ts if (wall - t) >= 0]
+                lags.extend(new_lags)
+                appends.append((sz - last, len(rec_ts), wall))
+                if new_lags:
+                    print(f'  +{sz - last}B  {len(rec_ts)}rec  '
+                          f'lag med={statistics.median(new_lags):.2f}s '
+                          f'min={min(new_lags):.2f}s max={max(new_lags):.2f}s')
+                else:
+                    print(f'  +{sz - last}B  {len(rec_ts)}rec (no usable timestamps)')
+                last = sz
+    except KeyboardInterrupt:
+        pass
+
+    summary = summarize(path, src, t_start, time.time(), appends, lags)
+    print('\n' + summary)
+    if out:
+        with open(out, 'a') as fh:
+            fh.write(summary + '\n')
+    return summary
+
+
+def _flag(name):
+    return name in sys.argv
+
+
+def _val(name, cast=float, default=None):
+    if name in sys.argv:
+        i = sys.argv.index(name)
+        if i + 1 < len(sys.argv):
+            try:
+                return cast(sys.argv[i + 1])
+            except Exception:
+                return default
+    return default
 
 
 if __name__ == '__main__':
-    if len(sys.argv) > 2 and sys.argv[1] == '--watch':
-        watch(sys.argv[2])
+    if '--watch' in sys.argv:
+        # python3 freshness-probe.py --watch <file> [--duration N] [--out FILE] [--poll S]
+        wf = [a for a in sys.argv if not a.startswith('-') and a != sys.argv[0] and a != _val('--duration', str, '') and a != _val('--out', str, '') and a != _val('--poll', str, '')]
+        # robustly find the file arg = first non-flag token after --watch
+        idx = sys.argv.index('--watch')
+        path = sys.argv[idx + 1] if idx + 1 < len(sys.argv) else None
+        if not path:
+            print('usage: freshness-probe.py --watch <file> [--duration N] [--out FILE] [--poll S]')
+            sys.exit(2)
+        watch(path,
+              duration=(int(_val('--duration')) if _val('--duration') else None),
+              out=_val('--out', str),
+              poll=(float(_val('--poll')) if _val('--poll') else 0.1))
     else:
         analyze()
