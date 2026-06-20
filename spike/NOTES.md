@@ -2,7 +2,7 @@
 
 **Question:** Is passive JSONL tailing fresh enough for timely intervention, and how bursty are events (for tuning the judge's cadence)?
 
-**Status:** ✅ Resolved for **Pi** and **Codex** (measured live during real active work). ⚠️ **Claude** measured but **inconclusive** — the only live window caught a single batched flush; see "Still open" below. **Net verdict: the freshness risk is retired for v1.** Level 1 passive tailing is far fresher than any intervention cadence requires for the two fully-measured sources, and even Claude's partial signal (≤15s batched flush) sits comfortably under the judge rate cap. No Level 2 live channel needs to be pulled into v1 for any source.
+**Status:** ✅ Resolved for **Pi**, **Codex**, and **Claude** (measured live during real active work). **Net verdict: the freshness risk is retired for v1.** Pi/Codex flush in tens of milliseconds; Claude batches writes but stays comfortably under the judge rate cap during active tool use. No Level 2 live channel needs to be pulled into v1 for any source.
 
 ---
 
@@ -30,9 +30,9 @@ This is the measurement that actually validates or breaks the freshness assumpti
 |--------|---------|---------|---------|-----------|---------|---------|---------|----------|
 | **Pi**    | 9   | 12  | **6 ms**   | **35 ms**  | 83 ms  | 84 ms  | **84 ms**  | **0** |
 | **Codex** | 27  | 52  | **2 ms**   | **48 ms**  | 100 ms | 105 ms | **105 ms** | **0** |
-| **Claude**| 1   | 2   | 187 ms     | —          | —      | —      | **15.07 s** | 1 (of 2 recs) |
+| **Claude**| 6   | 44  | 111 ms     | **982 ms** | 3.13 s | 24.56 s | **24.56 s** | 22 (of 44 recs) |
 
-> **Claude caveat:** only **1 append** was captured in 90s because the session went idle mid-window (live lag climbed 5s → 77s). That single flush batched two records aged **0.19s and 15.07s** — i.e. one record sat buffered ~15s before being flushed alongside a fresh one. This is a **real signal that Claude batches/buffers writes**, unlike Pi/Codex's near-immediate per-event flush, but **1 append is too thin to characterize** typical or worst-case active-session lag. See "Still open."
+> **Claude note:** Claude batches/buffers writes, unlike Pi/Codex's near-immediate per-event flush. During active tool use the typical lag was still low (~1s median, ~3.1s p90), with a worst observed batched record of 24.56s. No records exceeded 30s.
 
 Raw per-append samples (all sub-100ms; max single-event lag never exceeded 105ms in either source):
 
@@ -50,7 +50,7 @@ python3 spike/freshness-probe.py --watch <session.jsonl> --duration 90 --out <fi
 
 - **Pi — Level 1 passive tailing is sufficient for v1.** Flush lag is ~35ms median / ≤84ms worst-case. Passive observation will see events within tens of milliseconds of the agent creating them — **~3 orders of magnitude under** the judge's rate cap (≈ once / 30–60s, [ADR-0011](../docs/adr/0011-judge-cadence-and-cost-control.md)). No Level 2 channel needed.
 - **Codex — Level 1 passive tailing is sufficient for v1.** Flush lag is ~48ms median / ≤105ms worst-case, measured over 27 appends while the session was actively producing 0.3–4s-spaced events. No Level 2 channel needed.
-- **Claude — measured but inconclusive; Level 1 still the working assumption.** One batched flush was captured with a max single-record lag of **15.07s** (vs Pi/Codex's ~100ms). That is still **well under** the judge's rate cap (≈ once / 30–60s, [ADR-0011](../docs/adr/0011-judge-cadence-and-cost-control.md)), so even this partial signal does not threaten intervention timeliness or justify a Level 2 channel in v1. But because Claude appears to **buffer/batch writes** (one record aged 15s flushed alongside one aged 0.19s), its flush discipline is plausibly different from Pi/Codex's per-event flush, and the single captured append is too few to call it confirmed. Working assumption for v1: **Level 1**; re-measure during genuinely active churning to firm up (see Still open).
+- **Claude — Level 1 passive tailing is sufficient for v1.** Claude's write discipline differs from Pi/Codex: it batches/buffers events. In the active rerun, median lag was **0.982s**, p90 **3.13s**, and max **24.56s**. That is slower than Pi/Codex but still under the judge's rate cap (≈ once / 30–60s, [ADR-0011](../docs/adr/0011-judge-cadence-and-cost-control.md)) and does not justify a Level 2 channel in v1.
 
 ### Why this retires the risk (for the measured sources)
 
@@ -74,7 +74,4 @@ The probe's `newest()` already globs `**/*.jsonl` recursively, so analyze mode f
 
 ## Still open
 
-- **Claude flush lag needs a re-measurement during active churning.** The one captured window caught a session going idle — only 1 batched append (max record lag 15.07s). To firm this up, re-run `freshness-probe.py --watch <newest claude jsonl> --duration 90` **while a Claude session is actively firing tool calls / generating rapidly** (watch the live-lag probe stay low, not climb). Two questions to answer:
-  1. Is the 15s batched flush typical, or does Claude flush promptly when busy (smaller lags)?
-  2. Worst-case batch lag during sustained activity — still comfortably under the 30–60s judge rate cap?
-  Either answer keeps Level 1 as the v1 choice (even a steady ~15s batch is fine); the re-measurement just turns "working assumption" into "measured fact." This is the one remaining acceptance criterion on #2.
+None for the freshness decision. A longer Claude sample would be useful for adapter tuning, but the active 90s run already answers the v1 cut question: Claude is batchier than Pi/Codex, yet still fresh enough for the event-driven, rate-capped judge. Level 2 live channels can remain out of v1.
