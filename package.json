@@ -1,0 +1,25 @@
+{
+  "name": "loopwatch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "flue build --target node",
+    "dev": "flue dev --target node",
+    "persistence:check": "tsx scripts/check-flue-persistence.ts",
+    "tsc": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@flue/runtime": "1.0.0-beta.2",
+    "valibot": "^1.1.0"
+  },
+  "devDependencies": {
+    "@flue/cli": "1.0.0-beta.1",
+    "@types/node": "^25.0.0",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

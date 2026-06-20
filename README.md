@@ -53,3 +53,27 @@ The PRD is the canonical product context, backed by the architecture decisions i
 - [CONTEXT.md](./CONTEXT.md) — glossary / ubiquitous language
 - [docs/adr/](./docs/adr/) — architecture decision records (0001–0011)
 - [loopwatch-handoff-2026-06-18.md](./loopwatch-handoff-2026-06-18.md) — earlier discussion handoff
+
+## Development
+
+Loopwatch's first walking-skeleton slice is a local Flue Node app with file-backed SQLite persistence, per [ADR-0007](./docs/adr/0007-deployment-shape-flue-node-engine-tauri-shell.md).
+
+Install dependencies:
+
+```sh
+pnpm install
+```
+
+Build the local Node target:
+
+```sh
+pnpm build
+```
+
+Run the persistence proof:
+
+```sh
+pnpm persistence:check
+```
+
+That command builds the Flue server, starts it, writes a `record-event` workflow run, stops the process, restarts it, and reads the same run metadata/events back from `data/flue.db`. Passing output proves `src/db.ts` is using file-backed `sqlite()` rather than the Node target's default in-memory database.
