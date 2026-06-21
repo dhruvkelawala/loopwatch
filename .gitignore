@@ -9,6 +9,7 @@ Thumbs.db
 # Node (for the future Flue app)
 node_modules/
 dist/
+data/
 *.log
 
 # Env / secrets
