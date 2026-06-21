@@ -4,11 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "adapter:claude": "tsx scripts/adapter-claude.ts",
     "build": "flue build --target node",
     "dev": "flue dev --target node",
+    "adapter:check": "tsx scripts/check-claude-adapter.ts",
     "events:check": "tsx scripts/check-normalized-event.ts",
+    "ingest:check": "tsx scripts/check-claude-ingest.ts",
     "persistence:check": "tsx scripts/check-flue-persistence.ts",
-    "test": "tsx scripts/check-normalized-event.ts",
+    "test": "tsx scripts/check-normalized-event.ts && tsx scripts/check-claude-adapter.ts",
     "tsc": "tsc --noEmit"
   },
   "dependencies": {

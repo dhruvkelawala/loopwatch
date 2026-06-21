@@ -15,10 +15,12 @@ const dbPath = 'data/flue.db';
  * preserved — not stripped — on the round-trip through the file-backed store.
  */
 const normalizedEvent = {
+  source: 'claude',
   sessionId: 'pi_session_smoke',
   timestamp: '2026-06-21T12:00:00.000Z',
   kind: 'tool_call',
   actor: { type: 'tool', name: 'bash', callId: 'call_42', nestedNative: { pid: 1234 } },
+  context: { cwd: '/tmp/repo', gitBranch: 'main' },
   payload: { command: 'rg TODO', exitCode: 0 },
   // Unrecognized top-level fields an adapter might forward.
   sourceNativeFoo: { x: 1 },

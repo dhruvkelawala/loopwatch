@@ -14,9 +14,34 @@ import { z } from 'zod';
  * @see docs/adr/0004-normalized-event-shared-core-plus-extras.md
  */
 
+/**
+ * Conventional Loopwatch sources. The set is documentation of the sources we
+ * adapt today; the schema accepts any string so a new source can be added
+ * without a schema change.
+ */
+export const SOURCES = ['claude', 'codex', 'pi'] as const;
+export type Source = (typeof SOURCES)[number];
+
 /** Fixed vocabulary for the common-core {@link Actor.type}. */
 export const ACTOR_TYPES = ['user', 'agent', 'tool', 'system'] as const;
 export type ActorType = (typeof ACTOR_TYPES)[number];
+
+/**
+ * Per-event derived context — repo, branch, and working directory labels
+ * (ADR-0003). These describe *where* an event happened but are explicitly NOT
+ * part of session identity: one source session stays one Loopwatch session even
+ * when the work moves across repos, branches, or worktrees mid-session.
+ * Grouping and filtering by repo/branch is a view concern served by these
+ * labels. Loose so a source can attach extra context (e.g. `version`) verbatim.
+ *
+ * @see docs/adr/0003-session-identity-follows-the-source.md
+ */
+export const EventContextSchema = z.looseObject({
+  cwd: z.string().optional(),
+  repo: z.string().optional(),
+  gitBranch: z.string().optional(),
+});
+export type EventContext = z.infer<typeof EventContextSchema>;
 
 /**
  * Who or what produced an observed activity. `type` is the small fixed
@@ -49,24 +74,51 @@ export type EventKind = (typeof EVENT_KINDS)[number];
  * language downstream detectors and synthesis reason over.
  *
  * Common core (every source fills in):
- *   - `sessionId` — which Agent Session this event belongs to
+ *   - `source`    — the source that produced this (claude / codex / pi / …)
+ *   - `sessionId` — the source-native session id this event belongs to
  *   - `timestamp` — when the activity occurred (ISO 8601)
  *   - `kind`      — event kind (a {@link EVENT_KINDS} value, or any
  *                   source-native string)
  *   - `actor`     — who/what produced the activity
  *
- * Source extras — the conventional `payload` bag plus any other top-level
- * field — are preserved verbatim via the loose schema. See the module docstring
- * for the no-drop guarantee.
+ * Session identity is the pair `(source, sessionId)` (ADR-0003); use
+ * {@link sessionKey} to derive the stable composite key. `context` carries
+ * per-event repo/branch/cwd labels (derived context, not identity). Source
+ * extras — the conventional `payload` bag plus any other top-level field — are
+ * preserved verbatim via the loose schema. See the module docstring for the
+ * no-drop guarantee.
+ *
+ * The common-core field list was deliberately left open in ADR-0004 "to be
+ * fixed when the first adapter is built"; `source` and `context` were added
+ * when the Claude adapter (the first Source Adapter) landed.
  */
 export const LoopwatchEventSchema = z.looseObject({
-  sessionId: z.string(),
+  // Identity fields are non-empty: an event with no source/session can't be
+  // attributed to an Agent Session, so it's rejected rather than stored blank.
+  source: z.string().min(1),
+  sessionId: z.string().min(1),
   timestamp: z.string(),
-  kind: z.string(),
+  kind: z.string().min(1),
   actor: ActorSchema,
+  context: EventContextSchema.optional(),
   payload: z.unknown().optional(),
 });
 export type LoopwatchEvent = z.infer<typeof LoopwatchEventSchema>;
+
+/** The two fields that together identify an Agent Session (ADR-0003). */
+export interface SessionIdentity {
+  source: string;
+  sessionId: string;
+}
+
+/**
+ * Derive the stable composite session key `(source, sessionId)` (ADR-0003).
+ * One source session is one Loopwatch session; this key is how downstream
+ * consumers group events without splitting or stitching sessions.
+ */
+export function sessionKey(identity: SessionIdentity): string {
+  return `${identity.source}:${identity.sessionId}`;
+}
 
 /** Input shape accepted by {@link toLoopwatchEvent} / the record-event workflow. */
 export type LoopwatchEventInput = z.input<typeof LoopwatchEventSchema>;
