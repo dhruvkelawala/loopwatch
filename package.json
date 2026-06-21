@@ -6,12 +6,14 @@
   "scripts": {
     "build": "flue build --target node",
     "dev": "flue dev --target node",
+    "events:check": "tsx scripts/check-normalized-event.ts",
     "persistence:check": "tsx scripts/check-flue-persistence.ts",
+    "test": "tsx scripts/check-normalized-event.ts",
     "tsc": "tsc --noEmit"
   },
   "dependencies": {
     "@flue/runtime": "1.0.0-beta.2",
-    "valibot": "^1.1.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@flue/cli": "1.0.0-beta.1",
