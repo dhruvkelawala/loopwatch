@@ -19,6 +19,7 @@ import {
   ACTOR_TYPES,
   EVENT_KINDS,
   LoopwatchEventSchema,
+  sessionKey,
   toLoopwatchEvent,
 } from '../src/events.js';
 
@@ -41,6 +42,7 @@ function assertDeepEqual(actual: unknown, expected: unknown, label: string) {
 // A record with the full common core plus a generous helping of unrecognized,
 // source-native fields at every level. Every one of these must survive.
 const richRecord = {
+  source: 'claude',
   sessionId: 'pi_session_01HX…',
   timestamp: '2026-06-21T12:00:00.000Z',
   kind: 'tool_call',
@@ -50,6 +52,7 @@ const richRecord = {
     callId: 'call_42',
     hostNative: { pid: 1234, shell: 'zsh' }, // nested unknown detail
   },
+  context: { cwd: '/Users/d/dev/loopwatch', gitBranch: 'main', sourceVersion: '2.1.170' },
   payload: {
     command: 'rg TODO',
     exitCode: 0,
@@ -115,11 +118,49 @@ check('actor rejects an unknown type (core is validated, not faked)', () => {
 });
 
 check('malformed common core is rejected rather than coerced', () => {
-  // Missing sessionId, non-string timestamp, missing actor.
+  // Missing source/sessionId, missing actor.
   assert.throws(
     () => toLoopwatchEvent({ timestamp: 'now', kind: 'message' }),
     (err: unknown) => err instanceof z.ZodError,
-    'missing sessionId + actor should reject',
+    'missing source + sessionId + actor should reject',
+  );
+});
+
+check('source is part of the common core and required (ADR-0003)', () => {
+  const { source: _omit, ...withoutSource } = richRecord;
+  assert.throws(
+    () => toLoopwatchEvent(withoutSource),
+    (err: unknown) => err instanceof z.ZodError,
+    'missing source should reject',
+  );
+});
+
+check('empty identity fields are rejected (source / sessionId / kind .min(1))', () => {
+  for (const bad of [
+    { ...richRecord, source: '' },
+    { ...richRecord, sessionId: '' },
+    { ...richRecord, kind: '' },
+  ]) {
+    assert.throws(
+      () => toLoopwatchEvent(bad),
+      (err: unknown) => err instanceof z.ZodError,
+      `expected empty identity field to reject: ${JSON.stringify({ source: bad.source, sessionId: bad.sessionId, kind: bad.kind })}`,
+    );
+  }
+});
+
+check('context (repo/branch/cwd labels) round-trips, including extras', () => {
+  const out = toLoopwatchEvent(richRecord);
+  assertDeepEqual(out.context, richRecord.context, 'context');
+});
+
+check('sessionKey derives the stable (source, sessionId) identity', () => {
+  assert.equal(sessionKey(richRecord), 'claude:pi_session_01HX…');
+  // Identity is (source, sessionId) only — repo/branch are not part of it.
+  assert.equal(
+    sessionKey({ source: 'claude', sessionId: 'pi_session_01HX…' }),
+    sessionKey(richRecord),
+    'context must not affect identity',
   );
 });
 

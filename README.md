@@ -80,12 +80,29 @@ That command builds the Flue server, starts it, writes a `record-event` workflow
 
 ### Normalized events
 
-The shared event language is defined in [`src/events.ts`](./src/events.ts), per [ADR-0004](./docs/adr/0004-normalized-event-shared-core-plus-extras.md). Every Loopwatch Event carries a small common core — `sessionId`, `timestamp`, `kind`, and `actor` (`user` / `agent` / `tool` / `system`) — plus a flexible source-specific payload. Adapters never drop data they don't recognize: unknown fields and unknown kinds are preserved verbatim (the schema uses Zod's `looseObject`), and missing common-core data is rejected rather than faked.
+The shared event language is defined in [`src/events.ts`](./src/events.ts), per [ADR-0004](./docs/adr/0004-normalized-event-shared-core-plus-extras.md). Every Loopwatch Event carries a small common core — `source`, `sessionId`, `timestamp`, `kind`, and `actor` (`user` / `agent` / `tool` / `system`) — plus per-event `context` labels (cwd / gitBranch) and a flexible source-specific payload. Session identity is the pair `(source, sessionId)` ([ADR-0003](./docs/adr/0003-session-identity-follows-the-source.md)); repo/branch are derived context, never identity. Adapters never drop data they don't recognize: unknown fields and unknown kinds are preserved verbatim (the schema uses Zod's `looseObject`), and missing common-core data is rejected rather than faked.
 
-The `record-event` workflow is the ingest boundary: it validates the common core, preserves all extras, and persists the event onto Flue's Durable Streams log for the run via a structured `log` event.
+The `record-event` (single) and `record-events` (batch) workflows are the ingest boundary: they validate the common core, preserve all extras, and persist each event onto Flue's Durable Streams log for the run via a structured `log` event.
 
 Check the model in isolation (no server required):
 
 ```sh
 pnpm events:check
+```
+
+### Claude Source Adapter
+
+The first Source Adapter ([`src/adapters/claude/`](./src/adapters/claude/), [ADR-0003](./docs/adr/0003-session-identity-follows-the-source.md) / [ADR-0009](./docs/adr/0009-session-liveness-and-freshness-risk.md)) tails Claude Code transcripts (`~/.claude/projects/**/*.jsonl`), maps each record to a normalized event, and batch-ingests them into the store. It keeps an idempotent per-transcript cursor (path · inode · byte offset · last uuid · parser version) so a restart resumes without re-emitting, tolerates partial trailing lines and rotation, and tracks liveness (`active → idle → ended`) on configurable thresholds.
+
+Run it against the live server (start `pnpm dev` first):
+
+```sh
+pnpm adapter:claude
+```
+
+Checks:
+
+```sh
+pnpm adapter:check   # pure: mapping, identity/context, cursor idempotency, live append, liveness (no server)
+pnpm ingest:check    # integration: adapter → record-events → durable store, live append without restart
 ```
