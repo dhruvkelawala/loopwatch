@@ -76,4 +76,16 @@ Run the persistence proof:
 pnpm persistence:check
 ```
 
-That command builds the Flue server, starts it, writes a `record-event` workflow run, stops the process, restarts it, and reads the same run metadata/events back from `data/flue.db`. Passing output proves `src/db.ts` is using file-backed `sqlite()` rather than the Node target's default in-memory database.
+That command builds the Flue server, starts it, writes a `record-event` workflow run carrying a normalized Loopwatch Event, stops the process, restarts it, and reads the same run metadata/events back from `data/flue.db`. Passing output proves `src/db.ts` is using file-backed `sqlite()` rather than the Node target's default in-memory database, and that the normalized event survives restart with every unrecognized field intact.
+
+### Normalized events
+
+The shared event language is defined in [`src/events.ts`](./src/events.ts), per [ADR-0004](./docs/adr/0004-normalized-event-shared-core-plus-extras.md). Every Loopwatch Event carries a small common core — `sessionId`, `timestamp`, `kind`, and `actor` (`user` / `agent` / `tool` / `system`) — plus a flexible source-specific payload. Adapters never drop data they don't recognize: unknown fields and unknown kinds are preserved verbatim (the schema uses Zod's `looseObject`), and missing common-core data is rejected rather than faked.
+
+The `record-event` workflow is the ingest boundary: it validates the common core, preserves all extras, and persists the event onto Flue's Durable Streams log for the run via a structured `log` event.
+
+Check the model in isolation (no server required):
+
+```sh
+pnpm events:check
+```
