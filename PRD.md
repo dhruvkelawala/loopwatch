@@ -63,7 +63,7 @@ Verdict of the [intervention-UX prototype](prototype/NOTES.md): **layered**, esc
 
 1. **Pulse** — always-present menu-bar/tray indicator: aggregate convergence state ("5 · ⚠1"). The calm layer.
 2. **OS notification** — fires when a session needs you, *even when the Cockpit window is closed*.
-3. **Cockpit** — the dense, on-demand investigation window: **Session rail** (sessions grouped by repo, with capability badges + convergence status) · **Session timeline** (lanes: request / tools / files / git / validation / convergence) · **Evidence inspector** (the receipts behind any card). Opening/closing it does not stop observation.
+3. **Cockpit** — the dense, on-demand investigation window: **Session rail** (sessions grouped by repo, with capability badges + convergence status) · **Session timeline** (lanes: request / tools / files / git / validation / convergence) · **Evidence inspector** (the receipts behind any card). Opening/closing it does not stop observation. Visual direction: **Watchtower** — a dark, three-pane instrument deck with a convergence dial ([ADR-0012](docs/adr/0012-cockpit-visual-design-watchtower.md)), chosen in the [Cockpit-UI prototype](prototype/cockpit-ui-NOTES.md).
 
 Behaviour: every card is evidence-backed and dismissable; dismissals are remembered in-session ([ADR-0002](docs/adr/0002-convergence-detection-architecture.md) feedback); the Pivot nudge is togglable (default calm); no card without a recommended action.
 
@@ -146,6 +146,7 @@ Level 3 (agent control).
 | [0009](docs/adr/0009-session-liveness-and-freshness-risk.md) | Session liveness model + freshness risk |
 | [0010](docs/adr/0010-loop-anchored-convergence-watches-agent-evidence.md) | Loop-anchored convergence watches agent evidence |
 | [0011](docs/adr/0011-judge-cadence-and-cost-control.md) | Judge cadence & cost control |
+| [0012](docs/adr/0012-cockpit-visual-design-watchtower.md) | Cockpit visual design: Watchtower 3-pane instrument deck |
 
 ## 12. Open questions & risks
 
