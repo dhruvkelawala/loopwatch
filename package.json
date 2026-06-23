@@ -10,6 +10,8 @@
     "ui:dev": "vite --config ui/vite.config.ts",
     "ui:build": "vite build --config ui/vite.config.ts",
     "ui:tsc": "tsc -p ui/tsconfig.json --noEmit",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
     "adapter:check": "tsx scripts/check-claude-adapter.ts",
     "events:check": "tsx scripts/check-normalized-event.ts",
     "ingest:check": "tsx scripts/check-claude-ingest.ts",
@@ -31,6 +33,7 @@
   },
   "devDependencies": {
     "@flue/cli": "1.0.0-beta.1",
+    "@tauri-apps/cli": "2.11.3",
     "@types/node": "^25.0.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",

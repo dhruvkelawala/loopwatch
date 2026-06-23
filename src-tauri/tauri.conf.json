@@ -1,0 +1,34 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Loopwatch",
+  "version": "0.1.0",
+  "identifier": "com.dhruvkelawala.loopwatch",
+  "build": {
+    "beforeDevCommand": "pnpm build && pnpm ui:dev",
+    "beforeBuildCommand": "pnpm build && pnpm ui:build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../ui/dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "cockpit",
+        "title": "Loopwatch Cockpit",
+        "width": 1280,
+        "height": 760,
+        "minWidth": 760,
+        "minHeight": 620,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": false,
+    "targets": "all",
+    "icon": []
+  }
+}
