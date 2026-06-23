@@ -7,6 +7,9 @@
     "adapter:claude": "tsx scripts/adapter-claude.ts",
     "build": "flue build --target node",
     "dev": "flue dev --target node",
+    "ui:dev": "vite --config ui/vite.config.ts",
+    "ui:build": "vite build --config ui/vite.config.ts",
+    "ui:tsc": "tsc -p ui/tsconfig.json --noEmit",
     "adapter:check": "tsx scripts/check-claude-adapter.ts",
     "events:check": "tsx scripts/check-normalized-event.ts",
     "ingest:check": "tsx scripts/check-claude-ingest.ts",
@@ -15,14 +18,26 @@
     "tsc": "tsc --noEmit"
   },
   "dependencies": {
+    "@flue/react": "1.0.0-beta.1",
     "@flue/runtime": "1.0.0-beta.2",
+    "@flue/sdk": "1.0.0-beta.1",
+    "@fontsource/geist-mono": "^5.2.8",
+    "@fontsource/geist-sans": "^5.2.5",
+    "@tanstack/react-query": "^5.101.1",
+    "hono": "^4.12.27",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@flue/cli": "1.0.0-beta.1",
     "@types/node": "^25.0.0",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.3",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^8.1.0"
   },
   "engines": {
     "node": ">=22.19.0"
