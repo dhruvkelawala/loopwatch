@@ -106,3 +106,32 @@ Checks:
 pnpm adapter:check   # pure: mapping, identity/context, cursor idempotency, live append, liveness (no server)
 pnpm ingest:check    # integration: adapter → record-events → durable store, live append without restart
 ```
+
+### Cockpit (desktop shell)
+
+The Cockpit is the Watchtower UI ([`ui/`](./ui/)) hosted inside a Tauri desktop shell ([`src-tauri/`](./src-tauri/)), per [ADR-0007](./docs/adr/0007-deployment-shape-flue-node-engine-tauri-shell.md). The shell owns the Flue engine: on launch it spawns `node dist/server.mjs` (the built engine) as a child process on port `3583`, and on quit it stops that child.
+
+Run the web UI on its own against a separately-running engine (`pnpm dev` in another shell):
+
+```sh
+pnpm ui:dev          # Vite dev server on http://127.0.0.1:1420, proxies /api → engine
+```
+
+Run the full desktop app (builds the engine + UI, then launches the shell):
+
+```sh
+pnpm tauri:dev       # spawns the engine, opens the Cockpit window
+pnpm tauri:build     # compiles the release shell (bundling is disabled in v1)
+```
+
+Lifecycle on macOS:
+
+- **Closing the Cockpit window hides it** — the app stays running and the Flue engine keeps observing sessions in the background.
+- **Clicking the dock icon reopens** the hidden Cockpit window.
+- **Quitting (Cmd+Q) stops the Flue engine** before the process exits.
+
+Environment override for the engine child:
+
+- `LOOPWATCH_NODE_BIN` — Node binary used to run the engine (default `node`).
+
+The engine port is fixed at `3583`; the packaged webview's base URL and the CSP `connect-src` are pinned to it.

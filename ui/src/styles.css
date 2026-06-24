@@ -1,0 +1,149 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Geist Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-mono: "Geist Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  --color-watch-bg: #0a0d14;
+  --color-watch-bg-deep: #090d14;
+  --color-watch-bg-side: #080b11;
+  --color-watch-bg-top: #10151f;
+  --color-watch-bg-bottom: #0c1018;
+  --color-watch-bg-mid: #0e121b;
+  --color-watch-panel: #0f141d;
+  --color-watch-panel-2: #0c111a;
+  --color-watch-line: #19202d;
+  --color-watch-line-2: #27303f;
+  --color-watch-ink: #dbe2ee;
+  --color-watch-ink-2: #8f99ab;
+  --color-watch-ink-3: #5b6575;
+  --color-watch-accent: #3fd0e6;
+  --color-watch-accent-2: #5b8cff;
+  --color-watch-selection-ink: #061019;
+  --color-watch-scroll-hover: #3b4658;
+  --color-watch-glass: rgb(0 0 0 / 0.25);
+  --color-watch-glass-strong: rgb(0 0 0 / 0.30);
+  --color-watch-hover: rgb(255 255 255 / 0.025);
+  --color-watch-hover-faint: rgb(255 255 255 / 0.012);
+  --color-watch-subtle: rgb(255 255 255 / 0.03);
+  --color-watch-code: rgb(255 255 255 / 0.05);
+  --color-watch-card: rgb(255 255 255 / 0.018);
+
+  --color-severity-calm: #3bbd5a;
+  --color-severity-watch: #e0922f;
+  --color-severity-intervention: #e5484d;
+  --color-status-calm: #5fdc86;
+  --color-status-watch: #ffbf66;
+  --color-status-intervention: #ff7a7f;
+  --color-status-intervention-title: #ff9a9e;
+  --color-liveness-idle: #8a93a0;
+  --color-liveness-ended: #7a8090;
+
+  --shadow-watch-accent-glow: 0 0 10px var(--color-watch-accent);
+  --shadow-watch-warn-glow: 0 0 8px var(--color-severity-watch);
+  --shadow-watch-danger-glow: 0 0 10px var(--color-severity-intervention);
+  --shadow-watch-ping: 0 0 6px currentColor;
+  --shadow-watch-card: 0 1px 2px rgb(0 0 0 / 0.25);
+  --shadow-watch-selected: inset 2px 0 0 var(--color-watch-accent);
+
+  --animate-watchtower-sweep: watchtower-sweep 3.8s linear infinite;
+  --animate-watchtower-blip: watchtower-blip 1.7s ease-in-out infinite;
+  --animate-watchtower-ping: watchtower-ping 1.8s cubic-bezier(0,.2,.2,1) infinite;
+}
+
+@utility bg-watch-shell {
+  background:
+    radial-gradient(1100px 560px at 78% -12%, color-mix(in oklab, var(--color-watch-accent) 7%, transparent), transparent 62%),
+    radial-gradient(900px 500px at 12% 115%, color-mix(in oklab, var(--color-watch-accent-2) 5%, transparent), transparent 60%),
+    var(--color-watch-bg);
+}
+
+@utility bg-watch-title-fade {
+  background: linear-gradient(180deg, var(--color-watch-bg-mid) 74%, color-mix(in oklab, var(--color-watch-bg-mid) 0%, transparent));
+}
+
+@utility bg-watch-selected {
+  background: linear-gradient(90deg, color-mix(in oklab, var(--color-watch-accent) 12%, transparent), color-mix(in oklab, var(--color-watch-accent) 3%, transparent));
+}
+
+@utility bg-evidence-intervention {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--color-severity-intervention) 7%, transparent), color-mix(in oklab, white 1%, transparent));
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  min-width: 760px;
+  overflow: hidden;
+  background: var(--color-watch-bg);
+  color: var(--color-watch-ink);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+}
+
+::selection {
+  color: var(--color-watch-selection-ink);
+  background: var(--color-watch-accent);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: color-mix(in oklab, var(--color-watch-bg-side) 60%, transparent);
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid color-mix(in oklab, var(--color-watch-bg-side) 80%, transparent);
+  border-radius: 999px;
+  background: var(--color-watch-line-2);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-watch-scroll-hover);
+}
+
+@keyframes watchtower-sweep {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes watchtower-blip {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.32;
+  }
+}
+
+@keyframes watchtower-ping {
+  0% {
+    opacity: 0.75;
+    transform: scale(1);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(2.5);
+  }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "loopwatch"
+version = "0.1.0"
+description = "Loopwatch desktop shell"
+authors = ["Dhruv Kelawala"]
+license = "MIT"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
