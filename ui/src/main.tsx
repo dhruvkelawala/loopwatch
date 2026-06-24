@@ -13,8 +13,12 @@ import { App } from './App';
 import './styles.css';
 
 // In Vite dev, `/api` is proxied to the local Flue engine to avoid browser CORS.
-// The later Tauri shell can pass an absolute local URL via VITE_LOOPWATCH_FLUE_URL.
-const flueBaseUrl = import.meta.env.VITE_LOOPWATCH_FLUE_URL ?? '/api';
+// In a production build the Tauri shell loads static assets from a non-HTTP
+// origin with no dev proxy, so default to the engine's local address instead.
+// `VITE_LOOPWATCH_FLUE_URL` overrides either default.
+const flueBaseUrl =
+  import.meta.env.VITE_LOOPWATCH_FLUE_URL ??
+  (import.meta.env.DEV ? '/api' : 'http://127.0.0.1:3583');
 const client = createFlueClient({
   baseUrl: flueBaseUrl,
   fetch: (input, init) => fetch(input, init),

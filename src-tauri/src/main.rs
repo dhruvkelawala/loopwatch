@@ -4,12 +4,13 @@ use std::{
     process::{Child, Command, Stdio},
     sync::Mutex,
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
 /// Window label for the Cockpit, declared in `tauri.conf.json`.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const COCKPIT_WINDOW_LABEL: &str = "cockpit";
 
 struct EngineProcess {
@@ -17,7 +18,7 @@ struct EngineProcess {
 }
 
 impl EngineProcess {
-    /// Stop the Flue engine, killing and reaping the child process.
+    /// Stop the Flue engine, reaping the child process.
     ///
     /// Safe to call more than once: the child handle is taken out on the first
     /// call, so later calls (e.g. the `Drop` fallback) become no-ops.
@@ -29,12 +30,47 @@ impl EngineProcess {
             return;
         };
 
-        if let Err(error) = child.kill() {
-            eprintln!("[loopwatch] failed to stop Flue engine: {error}");
+        terminate_engine(&mut child);
+    }
+}
+
+/// Stop the Flue engine child, preferring a graceful SIGTERM so the engine runs
+/// its shutdown handler and closes the durable store cleanly. Escalates to a
+/// forceful kill if the engine does not exit in time (or on non-Unix platforms,
+/// where `Child::kill` is the only portable option).
+fn terminate_engine(child: &mut Child) {
+    #[cfg(unix)]
+    {
+        // SAFETY: `child.id()` is the PID of the engine we spawned; SIGTERM asks
+        // Flue to flush and close its durable store before exiting.
+        unsafe {
+            libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
         }
-        if let Err(error) = child.wait() {
-            eprintln!("[loopwatch] failed to wait for Flue engine shutdown: {error}");
+
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => return,
+                Ok(None) if Instant::now() < deadline => {
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    eprintln!(
+                        "[loopwatch] failed to poll Flue engine during shutdown: {error}"
+                    );
+                    break;
+                }
+            }
         }
+    }
+
+    // Non-Unix, or the engine ignored SIGTERM within the grace window: force it.
+    if let Err(error) = child.kill() {
+        eprintln!("[loopwatch] failed to stop Flue engine: {error}");
+    }
+    if let Err(error) = child.wait() {
+        eprintln!("[loopwatch] failed to wait for Flue engine shutdown: {error}");
     }
 }
 
@@ -50,20 +86,7 @@ fn main() {
             app.manage(spawn_flue_engine()?);
             Ok(())
         })
-        .on_window_event(|window, event| {
-            // Closing the Cockpit window hides it instead of quitting the app, so the
-            // Flue engine keeps observing sessions in the background (ADR-0007). The
-            // window is restored on dock-icon reopen; the engine is torn down only on
-            // an explicit quit.
-            if let WindowEvent::CloseRequested { api, .. } = event {
-                if window.label() == COCKPIT_WINDOW_LABEL {
-                    api.prevent_close();
-                    if let Err(error) = window.hide() {
-                        eprintln!("[loopwatch] failed to hide Cockpit window: {error}");
-                    }
-                }
-            }
-        })
+        .on_window_event(handle_window_event)
         .build(tauri::generate_context!())
         .expect("error while building Loopwatch");
 
@@ -81,6 +104,26 @@ fn main() {
         _ => {}
     });
 }
+
+/// On macOS, closing the Cockpit window hides it instead of quitting the app, so
+/// the Flue engine keeps observing sessions in the background (ADR-0007); the
+/// window is restored on dock-icon reopen. Other desktop platforms have no
+/// reopen affordance, so closing quits normally and the engine is torn down via
+/// `RunEvent::Exit` / `Drop`.
+#[cfg(target_os = "macos")]
+fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
+    if let WindowEvent::CloseRequested { api, .. } = event {
+        if window.label() == COCKPIT_WINDOW_LABEL {
+            api.prevent_close();
+            if let Err(error) = window.hide() {
+                eprintln!("[loopwatch] failed to hide Cockpit window: {error}");
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn handle_window_event(_window: &tauri::Window, _event: &WindowEvent) {}
 
 #[cfg(target_os = "macos")]
 fn show_cockpit(app_handle: &tauri::AppHandle) {
