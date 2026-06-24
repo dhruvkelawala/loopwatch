@@ -13,6 +13,11 @@ use tauri::{Manager, RunEvent, WindowEvent};
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const COCKPIT_WINDOW_LABEL: &str = "cockpit";
 
+/// Fixed port the Flue engine listens on. The packaged webview's base URL
+/// (`ui/src/main.tsx`) and the CSP `connect-src` (`tauri.conf.json`) are pinned
+/// to this port, so it is intentionally not user-overridable.
+const ENGINE_PORT: &str = "3583";
+
 struct EngineProcess {
     child: Mutex<Option<Child>>,
 }
@@ -150,11 +155,10 @@ fn spawn_flue_engine() -> Result<EngineProcess, Box<dyn std::error::Error>> {
     }
 
     let node_bin = env::var("LOOPWATCH_NODE_BIN").unwrap_or_else(|_| "node".to_string());
-    let port = env::var("LOOPWATCH_ENGINE_PORT").unwrap_or_else(|_| "3583".to_string());
     let mut child = Command::new(node_bin)
         .arg(&server_path)
         .current_dir(&project_root)
-        .env("PORT", &port)
+        .env("PORT", ENGINE_PORT)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -163,7 +167,7 @@ fn spawn_flue_engine() -> Result<EngineProcess, Box<dyn std::error::Error>> {
     thread::sleep(Duration::from_millis(250));
     if let Some(status) = child.try_wait()? {
         return Err(format!(
-            "Flue engine exited during startup with status {status}. Is port {port} already in use?"
+            "Flue engine exited during startup with status {status}. Is port {ENGINE_PORT} already in use?"
         )
         .into());
     }
@@ -171,7 +175,7 @@ fn spawn_flue_engine() -> Result<EngineProcess, Box<dyn std::error::Error>> {
     println!(
         "[loopwatch] spawned Flue engine pid={} on http://127.0.0.1:{}",
         child.id(),
-        port
+        ENGINE_PORT
     );
 
     Ok(EngineProcess {

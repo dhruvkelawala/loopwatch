@@ -130,7 +130,8 @@ Lifecycle on macOS:
 - **Clicking the dock icon reopens** the hidden Cockpit window.
 - **Quitting (Cmd+Q) stops the Flue engine** before the process exits.
 
-Environment overrides for the engine child:
+Environment override for the engine child:
 
 - `LOOPWATCH_NODE_BIN` — Node binary used to run the engine (default `node`).
-- `LOOPWATCH_ENGINE_PORT` — engine port (default `3583`).
+
+The engine port is fixed at `3583`; the packaged webview's base URL and the CSP `connect-src` are pinned to it.
