@@ -7,14 +7,21 @@ use std::{
     time::Duration,
 };
 
-use tauri::Manager;
+use tauri::{Manager, RunEvent, WindowEvent};
+
+/// Window label for the Cockpit, declared in `tauri.conf.json`.
+const COCKPIT_WINDOW_LABEL: &str = "cockpit";
 
 struct EngineProcess {
     child: Mutex<Option<Child>>,
 }
 
-impl Drop for EngineProcess {
-    fn drop(&mut self) {
+impl EngineProcess {
+    /// Stop the Flue engine, killing and reaping the child process.
+    ///
+    /// Safe to call more than once: the child handle is taken out on the first
+    /// call, so later calls (e.g. the `Drop` fallback) become no-ops.
+    fn stop(&self) {
         let Ok(mut child_slot) = self.child.lock() else {
             return;
         };
@@ -31,14 +38,61 @@ impl Drop for EngineProcess {
     }
 }
 
+impl Drop for EngineProcess {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 fn main() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .setup(|app| {
             app.manage(spawn_flue_engine()?);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Loopwatch");
+        .on_window_event(|window, event| {
+            // Closing the Cockpit window hides it instead of quitting the app, so the
+            // Flue engine keeps observing sessions in the background (ADR-0007). The
+            // window is restored on dock-icon reopen; the engine is torn down only on
+            // an explicit quit.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == COCKPIT_WINDOW_LABEL {
+                    api.prevent_close();
+                    if let Err(error) = window.hide() {
+                        eprintln!("[loopwatch] failed to hide Cockpit window: {error}");
+                    }
+                }
+            }
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building Loopwatch");
+
+    app.run(|app_handle, event| match event {
+        // Clicking the dock icon (macOS "reopen") brings the hidden Cockpit back.
+        #[cfg(target_os = "macos")]
+        RunEvent::Reopen { .. } => {
+            show_cockpit(app_handle);
+        }
+        // An explicit quit (Cmd+Q) tears the engine down before the process exits.
+        // `Drop` covers any exit path that skips this event.
+        RunEvent::Exit => {
+            app_handle.state::<EngineProcess>().stop();
+        }
+        _ => {}
+    });
+}
+
+#[cfg(target_os = "macos")]
+fn show_cockpit(app_handle: &tauri::AppHandle) {
+    let Some(window) = app_handle.get_webview_window(COCKPIT_WINDOW_LABEL) else {
+        return;
+    };
+    if let Err(error) = window.show() {
+        eprintln!("[loopwatch] failed to show Cockpit window: {error}");
+    }
+    if let Err(error) = window.set_focus() {
+        eprintln!("[loopwatch] failed to focus Cockpit window: {error}");
+    }
 }
 
 fn spawn_flue_engine() -> Result<EngineProcess, Box<dyn std::error::Error>> {
