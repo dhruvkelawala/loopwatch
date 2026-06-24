@@ -28,8 +28,11 @@ impl EngineProcess {
     /// Safe to call more than once: the child handle is taken out on the first
     /// call, so later calls (e.g. the `Drop` fallback) become no-ops.
     fn stop(&self) {
-        let Ok(mut child_slot) = self.child.lock() else {
-            return;
+        // Recover the child even if the lock is poisoned: leaving the engine
+        // running would orphan it and hold port 3583 for the next launch.
+        let mut child_slot = match self.child.lock() {
+            Ok(slot) => slot,
+            Err(poisoned) => poisoned.into_inner(),
         };
         let Some(mut child) = child_slot.take() else {
             return;
