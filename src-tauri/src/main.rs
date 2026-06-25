@@ -1,6 +1,6 @@
 use std::{
     env,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
     thread,
@@ -18,19 +18,28 @@ const COCKPIT_WINDOW_LABEL: &str = "cockpit";
 /// to this port, so it is intentionally not user-overridable.
 const ENGINE_PORT: &str = "3583";
 
-struct EngineProcess {
-    child: Mutex<Option<Child>>,
+/// Env switch for disabling adapter supervision in local diagnostics.
+const CLAUDE_ADAPTER_ENV: &str = "LOOPWATCH_CLAUDE_ADAPTER";
+
+struct BackgroundProcesses {
+    engine: Mutex<Option<Child>>,
+    claude_adapter: Mutex<Option<Child>>,
 }
 
-impl EngineProcess {
-    /// Stop the Flue engine, reaping the child process.
+impl BackgroundProcesses {
+    /// Stop background children, reaping each process.
     ///
-    /// Safe to call more than once: the child handle is taken out on the first
+    /// Safe to call more than once: each child handle is taken out on the first
     /// call, so later calls (e.g. the `Drop` fallback) become no-ops.
     fn stop(&self) {
-        // Recover the child even if the lock is poisoned: leaving the engine
-        // running would orphan it and hold port 3583 for the next launch.
-        let mut child_slot = match self.child.lock() {
+        self.stop_child("Claude adapter", &self.claude_adapter);
+        self.stop_child("Flue engine", &self.engine);
+    }
+
+    fn stop_child(&self, label: &str, slot: &Mutex<Option<Child>>) {
+        // Recover the child even if the lock is poisoned: leaving a child
+        // running would orphan it and may hold port 3583 for the next launch.
+        let mut child_slot = match slot.lock() {
             Ok(slot) => slot,
             Err(poisoned) => poisoned.into_inner(),
         };
@@ -38,19 +47,19 @@ impl EngineProcess {
             return;
         };
 
-        terminate_engine(&mut child);
+        terminate_child(label, &mut child);
     }
 }
 
-/// Stop the Flue engine child, preferring a graceful SIGTERM so the engine runs
-/// its shutdown handler and closes the durable store cleanly. Escalates to a
-/// forceful kill if the engine does not exit in time (or on non-Unix platforms,
-/// where `Child::kill` is the only portable option).
-fn terminate_engine(child: &mut Child) {
+/// Stop a background child, preferring a graceful SIGTERM so Node processes run
+/// shutdown handlers and close durable stores cleanly. Escalates to a forceful
+/// kill if the process does not exit in time (or on non-Unix platforms, where
+/// `Child::kill` is the only portable option).
+fn terminate_child(label: &str, child: &mut Child) {
     #[cfg(unix)]
     {
-        // SAFETY: `child.id()` is the PID of the engine we spawned; SIGTERM asks
-        // Flue to flush and close its durable store before exiting.
+        // SAFETY: `child.id()` is the PID of the child process we spawned;
+        // SIGTERM asks it to flush and exit before we escalate.
         unsafe {
             libc::kill(child.id() as libc::pid_t, libc::SIGTERM);
         }
@@ -64,25 +73,23 @@ fn terminate_engine(child: &mut Child) {
                 }
                 Ok(None) => break,
                 Err(error) => {
-                    eprintln!(
-                        "[loopwatch] failed to poll Flue engine during shutdown: {error}"
-                    );
+                    eprintln!("[loopwatch] failed to poll {label} during shutdown: {error}");
                     break;
                 }
             }
         }
     }
 
-    // Non-Unix, or the engine ignored SIGTERM within the grace window: force it.
+    // Non-Unix, or the child ignored SIGTERM within the grace window: force it.
     if let Err(error) = child.kill() {
-        eprintln!("[loopwatch] failed to stop Flue engine: {error}");
+        eprintln!("[loopwatch] failed to stop {label}: {error}");
     }
     if let Err(error) = child.wait() {
-        eprintln!("[loopwatch] failed to wait for Flue engine shutdown: {error}");
+        eprintln!("[loopwatch] failed to wait for {label} shutdown: {error}");
     }
 }
 
-impl Drop for EngineProcess {
+impl Drop for BackgroundProcesses {
     fn drop(&mut self) {
         self.stop();
     }
@@ -91,7 +98,7 @@ impl Drop for EngineProcess {
 fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
-            app.manage(spawn_flue_engine()?);
+            app.manage(spawn_background_processes()?);
             Ok(())
         })
         .on_window_event(handle_window_event)
@@ -104,10 +111,10 @@ fn main() {
         RunEvent::Reopen { .. } => {
             show_cockpit(app_handle);
         }
-        // An explicit quit (Cmd+Q) tears the engine down before the process exits.
+        // An explicit quit (Cmd+Q) tears the children down before the process exits.
         // `Drop` covers any exit path that skips this event.
         RunEvent::Exit => {
-            app_handle.state::<EngineProcess>().stop();
+            app_handle.state::<BackgroundProcesses>().stop();
         }
         _ => {}
     });
@@ -146,8 +153,24 @@ fn show_cockpit(app_handle: &tauri::AppHandle) {
     }
 }
 
-fn spawn_flue_engine() -> Result<EngineProcess, Box<dyn std::error::Error>> {
+fn spawn_background_processes() -> Result<BackgroundProcesses, Box<dyn std::error::Error>> {
     let project_root = project_root()?;
+    let mut engine = spawn_flue_engine(&project_root)?;
+    let claude_adapter = match spawn_claude_adapter(&project_root) {
+        Ok(adapter) => adapter,
+        Err(error) => {
+            terminate_child("Flue engine", &mut engine);
+            return Err(error);
+        }
+    };
+
+    Ok(BackgroundProcesses {
+        engine: Mutex::new(Some(engine)),
+        claude_adapter: Mutex::new(claude_adapter),
+    })
+}
+
+fn spawn_flue_engine(project_root: &Path) -> Result<Child, Box<dyn std::error::Error>> {
     let server_path = project_root.join("dist/server.mjs");
     if !server_path.exists() {
         return Err(format!(
@@ -160,7 +183,7 @@ fn spawn_flue_engine() -> Result<EngineProcess, Box<dyn std::error::Error>> {
     let node_bin = env::var("LOOPWATCH_NODE_BIN").unwrap_or_else(|_| "node".to_string());
     let mut child = Command::new(node_bin)
         .arg(&server_path)
-        .current_dir(&project_root)
+        .current_dir(project_root)
         .env("PORT", ENGINE_PORT)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
@@ -181,9 +204,49 @@ fn spawn_flue_engine() -> Result<EngineProcess, Box<dyn std::error::Error>> {
         ENGINE_PORT
     );
 
-    Ok(EngineProcess {
-        child: Mutex::new(Some(child)),
-    })
+    Ok(child)
+}
+
+fn spawn_claude_adapter(project_root: &Path) -> Result<Option<Child>, Box<dyn std::error::Error>> {
+    if !claude_adapter_enabled() {
+        println!("[loopwatch] Claude adapter disabled by {CLAUDE_ADAPTER_ENV}");
+        return Ok(None);
+    }
+
+    let adapter_path = project_root.join("dist/adapter-claude.mjs");
+    if !adapter_path.exists() {
+        return Err(format!(
+            "Claude adapter artifact is missing at {}. Run `pnpm build` before launching Loopwatch.",
+            adapter_path.display()
+        )
+        .into());
+    }
+
+    let node_bin = env::var("LOOPWATCH_NODE_BIN").unwrap_or_else(|_| "node".to_string());
+    let mut child = Command::new(node_bin)
+        .arg(&adapter_path)
+        .current_dir(project_root)
+        .env("LOOPWATCH_SERVER_URL", format!("http://127.0.0.1:{ENGINE_PORT}"))
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+
+    thread::sleep(Duration::from_millis(250));
+    if let Some(status) = child.try_wait()? {
+        return Err(format!("Claude adapter exited during startup with status {status}.").into());
+    }
+
+    println!("[loopwatch] spawned Claude adapter pid={}", child.id());
+
+    Ok(Some(child))
+}
+
+fn claude_adapter_enabled() -> bool {
+    match env::var(CLAUDE_ADAPTER_ENV) {
+        Ok(value) => !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"),
+        Err(_) => true,
+    }
 }
 
 fn project_root() -> Result<PathBuf, Box<dyn std::error::Error>> {

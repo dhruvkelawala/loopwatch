@@ -109,7 +109,13 @@ pnpm ingest:check    # integration: adapter → record-events → durable store,
 
 ### Cockpit (desktop shell)
 
-The Cockpit is the Watchtower UI ([`ui/`](./ui/)) hosted inside a Tauri desktop shell ([`src-tauri/`](./src-tauri/)), per [ADR-0007](./docs/adr/0007-deployment-shape-flue-node-engine-tauri-shell.md). The shell owns the Flue engine: on launch it spawns `node dist/server.mjs` (the built engine) as a child process on port `3583`, and on quit it stops that child.
+The Cockpit is the Watchtower UI ([`ui/`](./ui/)) hosted inside a Tauri desktop shell ([`src-tauri/`](./src-tauri/)), per [ADR-0007](./docs/adr/0007-deployment-shape-flue-node-engine-tauri-shell.md). The shell owns the background observation processes: on launch it spawns `node dist/server.mjs` (the built engine) on port `3583` plus `node dist/adapter-claude.mjs` (the Claude Source Adapter), and on quit it stops both children.
+
+Run the Slice 5 live Cockpit proof (fixture Claude transcript → adapter → Flue runs → Cockpit projection):
+
+```sh
+pnpm cockpit:check
+```
 
 Run the web UI on its own against a separately-running engine (`pnpm dev` in another shell):
 
@@ -117,7 +123,7 @@ Run the web UI on its own against a separately-running engine (`pnpm dev` in ano
 pnpm ui:dev          # Vite dev server on http://127.0.0.1:1420, proxies /api → engine
 ```
 
-Run the full desktop app (builds the engine + UI, then launches the shell):
+Run the full desktop app (builds the engine, Claude adapter, and UI, then launches the shell):
 
 ```sh
 pnpm tauri:dev       # spawns the engine, opens the Cockpit window
@@ -130,8 +136,9 @@ Lifecycle on macOS:
 - **Clicking the dock icon reopens** the hidden Cockpit window.
 - **Quitting (Cmd+Q) stops the Flue engine** before the process exits.
 
-Environment override for the engine child:
+Environment overrides for supervised children:
 
-- `LOOPWATCH_NODE_BIN` — Node binary used to run the engine (default `node`).
+- `LOOPWATCH_NODE_BIN` — Node binary used to run the engine and Claude adapter (default `node`).
+- `LOOPWATCH_CLAUDE_ADAPTER=0` — disable Claude adapter supervision for diagnostics.
 
 The engine port is fixed at `3583`; the packaged webview's base URL and the CSP `connect-src` are pinned to it.
