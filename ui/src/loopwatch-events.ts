@@ -1,4 +1,5 @@
 import type { FlueEvent } from '@flue/sdk';
+import { capabilitiesFor, extractUsage, type Capability } from './cockpit/capabilities.js';
 import { LoopwatchEventSchema, type LoopwatchEvent } from './schemas/loopwatch.js';
 
 export type { LoopwatchEvent } from './schemas/loopwatch.js';
@@ -26,11 +27,19 @@ export interface SessionView {
   title: string;
   repo: string;
   branch: string;
+  /** True when the branch was inferred from git, not reported by the source (ADR-0008). */
+  branchInferred: boolean;
   goal: string;
   phase: string;
   severity: Severity;
   liveness: Liveness;
   elapsed: string;
+  /** Declared Source Capabilities — honest badges, no fake parity (ADR-0004). */
+  capabilities: Capability[];
+  /** Total tokens, or null when the source can't provide them (render "unavailable"). */
+  tokens: number | null;
+  /** Direct cost in USD, or null when unavailable. */
+  cost: number | null;
   eventCount: number;
   firstSeen: string;
   lastSeen: string;
@@ -105,19 +114,26 @@ function buildSessionView(id: string, events: LoopwatchEvent[], nowMs: number): 
   const title = titleForSession(events);
   const repo = latestString(events, (event) => event.context?.repo) ?? repoFromCwd(latestString(events, (event) => event.context?.cwd)) ?? 'unknown repo';
   const branch = latestString(events, (event) => event.context?.gitBranch) ?? 'unknown branch';
+  const branchInferred = branch !== 'unknown branch' && latestBoolean(events, (event) => event.context?.branchInferred);
   const liveness = livenessForEvent(last, nowMs);
+  const rawSource = first?.source ?? 'unknown';
+  const usage = extractUsage(rawSource, events);
 
   return {
     id,
-    source: sourceLabel(first?.source ?? 'unknown'),
+    source: sourceLabel(rawSource),
     title,
     repo,
     branch,
+    branchInferred,
     goal: openingRequest(events) ?? 'No user request recorded yet.',
     phase: phaseForEvent(last),
     severity: 'calm',
     liveness,
     elapsed: elapsedForSession(first, last, liveness, nowMs),
+    capabilities: capabilitiesFor(rawSource),
+    tokens: usage.tokens,
+    cost: usage.cost,
     eventCount: events.length,
     firstSeen: first?.timestamp ?? '',
     lastSeen: last?.timestamp ?? '',
@@ -160,6 +176,14 @@ function latestString(events: LoopwatchEvent[], pick: (event: LoopwatchEvent) =>
     if (value && value.length > 0) return value;
   }
   return undefined;
+}
+
+function latestBoolean(events: LoopwatchEvent[], pick: (event: LoopwatchEvent) => unknown): boolean {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const value = pick(events[index]);
+    if (typeof value === 'boolean') return value;
+  }
+  return false;
 }
 
 function repoFromCwd(cwd: string | undefined): string | undefined {

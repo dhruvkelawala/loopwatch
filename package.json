@@ -21,8 +21,9 @@
     "events:check": "tsx scripts/check-normalized-event.ts",
     "ingest:check": "tsx scripts/check-claude-ingest.ts",
     "cockpit:check": "tsx scripts/check-cockpit-live.ts",
+    "cockpit:caps:check": "tsx scripts/check-cockpit-capabilities.ts",
     "persistence:check": "tsx scripts/check-flue-persistence.ts",
-    "test": "tsx scripts/check-normalized-event.ts && tsx scripts/check-claude-adapter.ts && tsx scripts/check-codex-adapter.ts && tsx scripts/check-pi-adapter.ts",
+    "test": "tsx scripts/check-normalized-event.ts && tsx scripts/check-claude-adapter.ts && tsx scripts/check-codex-adapter.ts && tsx scripts/check-pi-adapter.ts && tsx scripts/check-cockpit-capabilities.ts",
     "tsc": "tsc --noEmit"
   },
   "dependencies": {
