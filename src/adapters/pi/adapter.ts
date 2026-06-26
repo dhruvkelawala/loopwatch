@@ -38,6 +38,16 @@ async function readHead(filePath: string): Promise<HeadContext | undefined> {
  * {@link gitEnrich} hook resolves the session cwd from the `session` head and
  * infers repo + branch from git (ADR-0008), so a Pi session still gets honest
  * repo context — the issue's key acceptance criterion.
+ *
+ * Note on Pi's "atomic-rename window" (spike/NOTES.md): Pi briefly drops the
+ * path during a write, which the shared tailer already tolerates via
+ * `statWithRetry` (ENOENT retry). Measured live, Pi appends *in place* — the
+ * session file's inode stays stable across appends — so the core's
+ * inode-change rotation path is not hit on normal Pi writes and the tail reads
+ * only the new bytes past the cursor. Even in the worst case the tail is
+ * deliberately at-least-once (see core/transcript.ts); any duplicate re-emit is
+ * collapsed downstream by the Cockpit's per-record-id dedupe, so no event is
+ * lost or double-counted.
  */
 export class PiAdapter extends TailingAdapter {
   constructor(config: PiAdapterConfig) {

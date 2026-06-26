@@ -113,8 +113,10 @@ function codexUsage(events: LoopwatchEvent[]): SessionUsage {
     if (payload?.type !== 'event_msg') continue;
     const info = recordValue(recordValue(payload.payload)?.info);
     const total = numberValue(recordValue(info?.total_token_usage)?.total_tokens);
-    // token_count is cumulative — the latest non-null sample is the session total.
-    if (total !== undefined) tokens = total;
+    // token_count is cumulative (monotonic), so the session total is the MAX
+    // sample — robust to Codex emitting several records in the same millisecond,
+    // whose relative order after the timestamp sort is otherwise arbitrary.
+    if (total !== undefined) tokens = tokens === null ? total : Math.max(tokens, total);
   }
 
   return { tokens, cost: null };

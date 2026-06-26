@@ -78,8 +78,23 @@ check('Codex surfaces cumulative tokens from token_count; cost not declared', ()
     NOW,
   );
   assert.deepEqual(view.capabilities, ['transcript', 'tools', 'tokens']);
-  assert.equal(view.tokens, 33575, 'tokens = latest cumulative total_token_usage.total_tokens');
+  assert.equal(view.tokens, 33575, 'tokens = max cumulative total_token_usage.total_tokens');
   assert.equal(view.cost, null, 'Codex cost unavailable (not declared)');
+});
+
+check('Codex token total is the max even when same-timestamp samples are reordered', () => {
+  const ts = at(45);
+  const [view] = buildSessionViews(
+    [
+      ev({ source: 'codex', sessionId: 'c5', kind: 'session', timestamp: at(120), context: { repo: 'acme' } }),
+      // Two cumulative samples at the SAME timestamp: the higher (later) total
+      // must win regardless of the arbitrary payload-hash tiebreak order.
+      ev({ source: 'codex', sessionId: 'c5', kind: 'usage', timestamp: ts, payload: { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { total_tokens: 51000 } } } } }),
+      ev({ source: 'codex', sessionId: 'c5', kind: 'usage', timestamp: ts, payload: { type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { total_tokens: 42000 } } } } }),
+    ],
+    NOW,
+  );
+  assert.equal(view.tokens, 51000, 'max cumulative total wins over an arbitrarily-ordered lower sample');
 });
 
 check('Codex with no token_count info renders tokens as unavailable (null), never faked', () => {
