@@ -79,38 +79,65 @@ function firstCwd(events: LoopwatchEventInput[]): string | undefined {
   return undefined;
 }
 
+function stringContext(event: LoopwatchEventInput, key: 'repo' | 'gitBranch'): string | undefined {
+  const value = event.context?.[key];
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
 /**
- * A batch enrich hook ({@link EnrichBatch}) that fills repo + branch context
- * from git for sources that don't fully record it in their transcript (issue
- * #11, ADR-0008). It resolves the session's cwd — preferring a cwd already on a
- * batch event, else `headCwd(filePath)` (e.g. read from the transcript head),
- * cached per file — then stamps every event with:
- *   - `context.cwd`           when missing
- *   - `context.repo`          inferred repo (basename of the git toplevel)
- *   - `context.gitBranch`     inferred current branch, plus
- *   - `context.branchInferred = true` so the Cockpit stays honest about
- *                             provenance (source-reported vs git-inferred).
+ * A batch enrich hook ({@link EnrichBatch}) that fills repo + branch context for
+ * sources that don't fully record it in every record (issue #11, ADR-0008).
  *
- * Source-reported values are never overwritten; only gaps are filled.
+ * Provenance is honest and source-truth wins:
+ *   - A **source-reported** repo/branch (e.g. Codex's head `session_meta`) is
+ *     remembered per file and propagated to the session's later records, which
+ *     don't repeat it — never marked inferred.
+ *   - Only when the source reports no branch at all (Pi) does it fall back to
+ *     **git inference** from the session cwd, stamping `context.branchInferred =
+ *     true` so the Cockpit can show the git-inferred provenance.
+ *
+ * The cwd is resolved per file — preferring a cwd already on a batch event, else
+ * `headCwd(filePath)` (read from the transcript head) — and cached.
  */
 export function gitEnrich(headCwd: (filePath: string) => Promise<string | undefined>): EnrichBatch {
   const cwdByFile = new Map<string, string | undefined>();
+  const reportedByFile = new Map<string, { repo?: string; gitBranch?: string }>();
 
   return async (events, { filePath }) => {
+    // Capture any source-reported repo/branch seen so far for this file.
+    const reported = reportedByFile.get(filePath) ?? {};
+    for (const event of events) {
+      reported.repo ??= stringContext(event, 'repo');
+      reported.gitBranch ??= stringContext(event, 'gitBranch');
+    }
+    reportedByFile.set(filePath, reported);
+
+    // Resolve the session cwd (event-carried, else the transcript head), cached.
     const eventCwd = firstCwd(events);
     if (eventCwd && !cwdByFile.has(filePath)) cwdByFile.set(filePath, eventCwd);
     if (!cwdByFile.has(filePath)) cwdByFile.set(filePath, await headCwd(filePath));
     const cwd = eventCwd ?? cwdByFile.get(filePath);
-    if (!cwd) return events;
 
-    const git = await resolveGitContext(cwd);
+    // Infer from git only when the source reports no branch at all.
+    const needsInference = !reported.gitBranch || !reported.repo;
+    const git = cwd && needsInference ? await resolveGitContext(cwd) : undefined;
+
     return events.map((event) => {
       const context: Record<string, unknown> = { ...(event.context ?? {}) };
-      if (!context.cwd) context.cwd = cwd;
-      if (git.repo && !context.repo) context.repo = git.repo;
-      if (git.gitBranch && !context.gitBranch) {
-        context.gitBranch = git.gitBranch;
-        context.branchInferred = true;
+      if (cwd && !context.cwd) context.cwd = cwd;
+
+      if (!context.repo) {
+        if (reported.repo) context.repo = reported.repo;
+        else if (git?.repo) context.repo = git.repo;
+      }
+      if (!context.gitBranch) {
+        if (reported.gitBranch) {
+          // Source-reported branch, propagated — not inferred.
+          context.gitBranch = reported.gitBranch;
+        } else if (git?.gitBranch) {
+          context.gitBranch = git.gitBranch;
+          context.branchInferred = true;
+        }
       }
       return { ...event, context };
     });
