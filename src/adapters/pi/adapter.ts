@@ -1,5 +1,5 @@
 import { capabilitiesFor } from '../core/capabilities.js';
-import { gitEnrich } from '../core/git-context.js';
+import { gitEnrich, type HeadContext } from '../core/git-context.js';
 import type { LivenessThresholds } from '../core/liveness.js';
 import { TailingAdapter, type IngestFn } from '../core/tailing-adapter.js';
 import { readFirstRecord } from '../core/transcript.js';
@@ -21,11 +21,14 @@ export interface PiAdapterConfig {
   log?: (message: string, data?: unknown) => void;
 }
 
-/** Read the session's cwd from a Pi session head (`session` record `cwd`). */
-async function headCwd(filePath: string): Promise<string | undefined> {
+/**
+ * Read the session's cwd from a Pi session head (`session` record `cwd`). Pi
+ * records no git, so repo + branch are left to git inference (ADR-0008).
+ */
+async function readHead(filePath: string): Promise<HeadContext | undefined> {
   const head = await readFirstRecord(filePath);
   const cwd = head?.cwd;
-  return typeof cwd === 'string' && cwd.length > 0 ? cwd : undefined;
+  return typeof cwd === 'string' && cwd.length > 0 ? { cwd } : undefined;
 }
 
 /**
@@ -46,7 +49,7 @@ export class PiAdapter extends TailingAdapter {
       parserVersion: PARSER_VERSION,
       mapRecord: mapPiRecord,
       sessionIdFromPath,
-      enrich: gitEnrich(headCwd),
+      enrich: gitEnrich(readHead),
       capabilities: capabilitiesFor(PI_SOURCE),
       thresholds: config.thresholds,
       initialAnchor: config.initialAnchor,

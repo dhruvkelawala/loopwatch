@@ -110,6 +110,31 @@ await check('envelope records map to normalized events: kind/actor, identity, co
   assert.deepEqual(events[3].payload, records[3]);
 });
 
+await check('tail-from-end propagates source-reported git from the head session_meta', async () => {
+  resetGitContextCache();
+  const f = await fixture();
+  // Seed a session_meta (carrying git) + one record, then start anchored at END
+  // so the head is seeded past — the tail-mode case from the review.
+  await writeFile(
+    f.rollout,
+    jsonl([
+      rec('session_meta', { id: UUID, cwd: '/tmp/lw-fake-repo', git: { branch: 'release/next', repository_url: 'https://github.com/acme/acme-api' } }),
+      rec('event_msg', { type: 'user_message', message: 'start' }),
+    ]),
+  );
+  const adapter = f.make('end');
+  assert.equal((await adapter.scanOnce()).ingestedEvents, 0, 'anchored at end → nothing on first pass');
+
+  // A later record carries no git of its own; it must inherit the head's
+  // source-reported branch/repo, NOT a working-tree inference.
+  await appendFile(f.rollout, jsonl([rec('event_msg', { type: 'agent_message', message: 'done' })]));
+  await adapter.scanOnce();
+  const [event] = f.ingested.map((e) => LoopwatchEventSchema.parse(e));
+  assert.equal(event.context?.gitBranch, 'release/next', 'inherited source-reported branch');
+  assert.equal(event.context?.repo, 'acme-api', 'inherited source-reported repo');
+  assert.equal((event.context as Record<string, unknown>).branchInferred, undefined, 'source-reported branch is not marked inferred');
+});
+
 await check('cursor is idempotent and resumes without re-emit across restart', async () => {
   resetGitContextCache();
   const f = await fixture();

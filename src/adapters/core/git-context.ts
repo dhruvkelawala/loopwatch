@@ -85,40 +85,56 @@ function stringContext(event: LoopwatchEventInput, key: 'repo' | 'gitBranch'): s
 }
 
 /**
+ * Source-reported session context read from a transcript's head record (e.g.
+ * Codex `session_meta` carries cwd + git; Pi `session` carries only cwd).
+ */
+export interface HeadContext {
+  cwd?: string;
+  repo?: string;
+  gitBranch?: string;
+}
+
+/**
  * A batch enrich hook ({@link EnrichBatch}) that fills repo + branch context for
  * sources that don't fully record it in every record (issue #11, ADR-0008).
  *
  * Provenance is honest and source-truth wins:
- *   - A **source-reported** repo/branch (e.g. Codex's head `session_meta`) is
- *     remembered per file and propagated to the session's later records, which
- *     don't repeat it — never marked inferred.
+ *   - A **source-reported** repo/branch (from the head record, or any record
+ *     that carries it) is remembered per file and propagated to the session's
+ *     later records, which don't repeat it — never marked inferred. This matters
+ *     in the default tail-from-end mode, where the head `session_meta` /
+ *     `session` is read once via `readHead` rather than re-seen per batch.
  *   - Only when the source reports no branch at all (Pi) does it fall back to
  *     **git inference** from the session cwd, stamping `context.branchInferred =
  *     true` so the Cockpit can show the git-inferred provenance.
- *
- * The cwd is resolved per file — preferring a cwd already on a batch event, else
- * `headCwd(filePath)` (read from the transcript head) — and cached.
  */
-export function gitEnrich(headCwd: (filePath: string) => Promise<string | undefined>): EnrichBatch {
-  const cwdByFile = new Map<string, string | undefined>();
+export function gitEnrich(readHead: (filePath: string) => Promise<HeadContext | undefined>): EnrichBatch {
+  const headByFile = new Map<string, HeadContext>();
   const reportedByFile = new Map<string, { repo?: string; gitBranch?: string }>();
 
   return async (events, { filePath }) => {
-    // Capture any source-reported repo/branch seen so far for this file.
+    // Capture any source-reported repo/branch carried on this batch's events.
     const reported = reportedByFile.get(filePath) ?? {};
     for (const event of events) {
       reported.repo ??= stringContext(event, 'repo');
       reported.gitBranch ??= stringContext(event, 'gitBranch');
     }
+
+    const eventCwd = firstCwd(events);
+    // Read the head once (cached) when the batch alone can't supply cwd or the
+    // source-reported git — the tail-from-end case where session_meta was seeded
+    // past. The head's repo/branch are source-reported, never inferred.
+    if (!headByFile.has(filePath) && (!eventCwd || !reported.repo || !reported.gitBranch)) {
+      headByFile.set(filePath, (await readHead(filePath)) ?? {});
+    }
+    const head = headByFile.get(filePath) ?? {};
+    reported.repo ??= head.repo;
+    reported.gitBranch ??= head.gitBranch;
     reportedByFile.set(filePath, reported);
 
-    // Resolve the session cwd (event-carried, else the transcript head), cached.
-    const eventCwd = firstCwd(events);
-    if (eventCwd && !cwdByFile.has(filePath)) cwdByFile.set(filePath, eventCwd);
-    if (!cwdByFile.has(filePath)) cwdByFile.set(filePath, await headCwd(filePath));
-    const cwd = eventCwd ?? cwdByFile.get(filePath);
+    const cwd = eventCwd ?? head.cwd;
 
-    // Infer from git only when the source reports no branch at all.
+    // Infer from git only when the source reports no repo/branch at all.
     const needsInference = !reported.gitBranch || !reported.repo;
     const git = cwd && needsInference ? await resolveGitContext(cwd) : undefined;
 

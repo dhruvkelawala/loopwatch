@@ -94,6 +94,32 @@ check('Codex with no token_count info renders tokens as unavailable (null), neve
   assert.equal(view.tokens, null, 'declared but unobserved → unavailable, not 0');
 });
 
+check('distinct Codex envelope records sharing a timestamp are not collapsed in dedupe', () => {
+  const ts = at(90);
+  const [view] = buildSessionViews(
+    [
+      ev({ source: 'codex', sessionId: 'c3', kind: 'session', timestamp: at(120), context: { repo: 'acme-api' } }),
+      // Two distinct records with the SAME timestamp + kind + actor and no text.
+      ev({ source: 'codex', sessionId: 'c3', kind: 'tool_call', actor: { type: 'agent' }, timestamp: ts, payload: { type: 'response_item', payload: { type: 'function_call', call_id: 'call_a', name: 'exec_command' }, timestamp: ts } }),
+      ev({ source: 'codex', sessionId: 'c3', kind: 'tool_call', actor: { type: 'agent' }, timestamp: ts, payload: { type: 'response_item', payload: { type: 'function_call', call_id: 'call_b', name: 'apply_patch' }, timestamp: ts } }),
+    ],
+    NOW,
+  );
+  assert.equal(view.eventCount, 3, 'distinct same-timestamp Codex records are all retained');
+});
+
+check('Codex message text is unpacked from the envelope into the title', () => {
+  const [view] = buildSessionViews(
+    [
+      ev({ source: 'codex', sessionId: 'c4', kind: 'message', actor: { type: 'user' }, timestamp: at(90), payload: { type: 'event_msg', payload: { type: 'user_message', message: 'Fix the failing auth test in packages/api' } } }),
+      ev({ source: 'codex', sessionId: 'c4', kind: 'message', actor: { type: 'agent' }, timestamp: at(30), payload: { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'On it.' }] } } }),
+    ],
+    NOW,
+  );
+  assert.match(view.title, /Fix the failing auth test/, 'Codex user text drives the title, not a generic fallback');
+  assert.match(view.goal, /Fix the failing auth test/, 'Codex user text drives the goal');
+});
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

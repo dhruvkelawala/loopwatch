@@ -92,7 +92,7 @@ function classify(record: CodexRecord): { kind: string; actorType: ActorType } {
 }
 
 /** Repo name from a remote URL like `https://github.com/org/repo(.git)`. */
-function repoFromUrl(url: unknown): string | undefined {
+export function repoFromUrl(url: unknown): string | undefined {
   if (typeof url !== 'string' || url.length === 0) return undefined;
   const trimmed = url.replace(/\.git$/, '').replace(/\/$/, '');
   const last = trimmed.split('/').filter(Boolean).at(-1);

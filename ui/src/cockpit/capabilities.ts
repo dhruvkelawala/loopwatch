@@ -84,8 +84,14 @@ function piUsage(events: LoopwatchEvent[]): SessionUsage {
 
     const input = numberValue(usageRecord.input);
     const output = numberValue(usageRecord.output);
+    const totalTokens = numberValue(usageRecord.totalTokens);
     if (input !== undefined || output !== undefined) {
       tokens += (input ?? 0) + (output ?? 0);
+      sawTokens = true;
+    } else if (totalTokens !== undefined) {
+      // Some Pi records report only a rolled-up totalTokens; honor it rather
+      // than rendering the declared tokens capability as unavailable.
+      tokens += totalTokens;
       sawTokens = true;
     }
 

@@ -282,8 +282,21 @@ function textFromEvent(event: LoopwatchEvent): string | undefined {
 
   if (typeof payload.content === 'string') return payload.content;
   const message = recordValue(payload.message);
-  const content = message?.content;
-  return textFromContent(content);
+  const direct = textFromContent(message?.content);
+  if (direct) return direct;
+
+  // Codex stores the raw `{ type, payload, timestamp }` envelope, so message
+  // text lives one level deeper: an `event_msg` carries `payload.message` as a
+  // string, a `response_item` message carries `payload.content` blocks
+  // (`input_text` / `output_text`). Unpack it so Codex sessions get real
+  // titles/goals/timeline text rather than the generic fallback.
+  const inner = recordValue(payload.payload);
+  if (inner) {
+    if (typeof inner.message === 'string') return inner.message;
+    const innerText = textFromContent(inner.content);
+    if (innerText) return innerText;
+  }
+  return undefined;
 }
 
 function textFromContent(content: unknown): string | undefined {
@@ -340,9 +353,36 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 
 function eventFingerprint(event: LoopwatchEvent): string {
   const payload = payloadRecord(event);
-  const uuid = typeof payload?.uuid === 'string' ? payload.uuid : undefined;
-  if (uuid) return `${event.source}:${event.sessionId}:${uuid}`;
-  return `${event.source}:${event.sessionId}:${event.timestamp}:${event.kind}:${event.actor.type}:${compact(textFromEvent(event) ?? '', 80)}`;
+  // Prefer a stable native record id: Claude `uuid`, Pi per-record `id`.
+  const uuid = typeof payload?.uuid === 'string' && payload.uuid.length > 0 ? payload.uuid : undefined;
+  if (uuid) return `${event.source}:${event.sessionId}:uuid:${uuid}`;
+  const id = typeof payload?.id === 'string' && payload.id.length > 0 ? payload.id : undefined;
+  if (id) return `${event.source}:${event.sessionId}:id:${id}`;
+  // Codex envelopes carry no per-record id and many share a timestamp, so a
+  // (timestamp, kind, actor, text) key collapses distinct records. Disambiguate
+  // with a stable hash of the raw payload (identical bytes on re-read still
+  // dedupe; distinct records do not).
+  return `${event.source}:${event.sessionId}:${event.timestamp}:${event.kind}:${event.actor.type}:${stableHash(payload)}`;
+}
+
+/** Deterministic 53-bit string hash (cyrb53), stable across re-reads of the same record. */
+function stableHash(value: unknown): string {
+  let text: string;
+  try {
+    text = JSON.stringify(value) ?? '';
+  } catch {
+    text = String(value);
+  }
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
 function compareEvents(a: LoopwatchEvent, b: LoopwatchEvent): number {

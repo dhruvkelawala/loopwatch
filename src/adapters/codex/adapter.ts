@@ -1,9 +1,9 @@
 import { capabilitiesFor } from '../core/capabilities.js';
-import { gitEnrich } from '../core/git-context.js';
+import { gitEnrich, type HeadContext } from '../core/git-context.js';
 import type { LivenessThresholds } from '../core/liveness.js';
 import { TailingAdapter, type IngestFn } from '../core/tailing-adapter.js';
 import { readFirstRecord } from '../core/transcript.js';
-import { mapCodexRecord, sessionIdFromPath } from './map.js';
+import { mapCodexRecord, repoFromUrl, sessionIdFromPath } from './map.js';
 import { CODEX_SESSIONS_ROOT, CODEX_SOURCE, isRolloutFile, PARSER_VERSION } from './types.js';
 
 export type { IngestFn } from '../core/tailing-adapter.js';
@@ -21,15 +21,28 @@ export interface CodexAdapterConfig {
   log?: (message: string, data?: unknown) => void;
 }
 
-/** Read the session's cwd from a rollout head (`session_meta.payload.cwd`). */
-async function headCwd(filePath: string): Promise<string | undefined> {
+/**
+ * Read the session's source-reported context from a rollout head
+ * (`session_meta.payload`): cwd + git branch / repo. In tail-from-end mode the
+ * head is seeded past, so this recovers the source-reported git rather than
+ * letting it fall back to working-tree inference.
+ */
+async function readHead(filePath: string): Promise<HeadContext | undefined> {
   const head = await readFirstRecord(filePath);
   const payload = head?.payload;
-  if (payload && typeof payload === 'object') {
-    const cwd = (payload as Record<string, unknown>).cwd;
-    if (typeof cwd === 'string' && cwd.length > 0) return cwd;
+  if (!payload || typeof payload !== 'object') return undefined;
+  const record = payload as Record<string, unknown>;
+
+  const context: HeadContext = {};
+  if (typeof record.cwd === 'string' && record.cwd.length > 0) context.cwd = record.cwd;
+  const git = record.git;
+  if (git && typeof git === 'object') {
+    const gitRecord = git as Record<string, unknown>;
+    if (typeof gitRecord.branch === 'string' && gitRecord.branch.length > 0) context.gitBranch = gitRecord.branch;
+    const repo = repoFromUrl(gitRecord.repository_url);
+    if (repo) context.repo = repo;
   }
-  return undefined;
+  return context;
 }
 
 /**
@@ -50,7 +63,7 @@ export class CodexAdapter extends TailingAdapter {
       mapRecord: mapCodexRecord,
       sessionIdFromPath,
       accept: isRolloutFile,
-      enrich: gitEnrich(headCwd),
+      enrich: gitEnrich(readHead),
       capabilities: capabilitiesFor(CODEX_SOURCE),
       thresholds: config.thresholds,
       initialAnchor: config.initialAnchor,
