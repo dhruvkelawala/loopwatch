@@ -120,6 +120,36 @@ check('Codex message text is unpacked from the envelope into the title', () => {
   assert.match(view.goal, /Fix the failing auth test/, 'Codex user text drives the goal');
 });
 
+check('Codex + Pi tool commands are unpacked and routed into timeline lanes', () => {
+  const [view] = buildSessionViews(
+    [
+      ev({ source: 'codex', sessionId: 't1', kind: 'message', actor: { type: 'user' }, timestamp: at(120), context: { repo: 'acme' }, payload: { type: 'event_msg', payload: { type: 'user_message', message: 'check git + run tests' } } }),
+      // Codex exec_command with a git command (JSON-string arguments).
+      ev({ source: 'codex', sessionId: 't1', kind: 'tool_call', actor: { type: 'agent' }, timestamp: at(90), payload: { type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: JSON.stringify({ cmd: 'git status --short' }) } } }),
+      // Pi toolCall bash with a validation command.
+      ev({ source: 'codex', sessionId: 't1', kind: 'tool_call', actor: { type: 'agent' }, timestamp: at(60), payload: { type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: JSON.stringify({ cmd: 'pnpm test' }) } } }),
+    ],
+    NOW,
+  );
+  const lane = (name: string) => view.lanes.find((l) => l.lane === name);
+  assert.ok(lane('git')?.items.some((i) => i.detail.includes('git status')), 'Codex git command routes to the git lane');
+  assert.ok(lane('validation')?.items.some((i) => i.detail.includes('pnpm test')), 'Codex validation command routes to the validation lane');
+});
+
+check('Pi toolCall + bashExecution commands are unpacked', () => {
+  const [view] = buildSessionViews(
+    [
+      ev({ source: 'pi', sessionId: 'tp', kind: 'session', timestamp: at(120), context: { repo: 'loopwatch' } }),
+      ev({ source: 'pi', sessionId: 'tp', kind: 'tool_call', actor: { type: 'agent' }, timestamp: at(90), payload: { type: 'message', id: 'a1', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'bash', arguments: { command: 'go test ./...' } }] } } }),
+      ev({ source: 'pi', sessionId: 'tp', kind: 'tool_result', actor: { type: 'tool' }, timestamp: at(60), payload: { type: 'message', id: 'b1', message: { role: 'bashExecution', command: 'git diff --stat', output: '' } } }),
+    ],
+    NOW,
+  );
+  const lane = (name: string) => view.lanes.find((l) => l.lane === name);
+  assert.ok(lane('validation')?.items.some((i) => i.detail.includes('go test')), 'Pi toolCall command routes to validation');
+  assert.ok(lane('git')?.items.some((i) => i.detail.includes('git diff')), 'Pi bashExecution command routes to git');
+});
+
 if (failures > 0) {
   console.error(`\n${failures} check(s) failed.`);
   process.exit(1);

@@ -319,28 +319,105 @@ function textFromContent(content: unknown): string | undefined {
   return parts.filter(Boolean).join('\n') || undefined;
 }
 
+/**
+ * Tool name across sources: Claude `tool_use` blocks, Pi `toolCall` blocks /
+ * `bashExecution`, and Codex `function_call` / `custom_tool_call` /
+ * `exec_command_end` envelopes. Without this the advertised `tools` capability
+ * would render as generic "Tool call" for Codex and Pi.
+ */
 function toolNameFromEvent(event: LoopwatchEvent): string | undefined {
-  const block = firstToolUseBlock(event);
-  if (typeof block?.name === 'string') return block.name;
+  const claude = firstToolUseBlock(event);
+  if (typeof claude?.name === 'string') return claude.name;
+
+  const pi = firstPiToolCall(event);
+  if (typeof pi?.name === 'string') return pi.name;
+  if (piBashCommand(event) !== undefined) return 'bash';
+
+  const codex = codexToolInfo(event);
+  if (codex?.name) return codex.name;
 
   const payload = payloadRecord(event);
   if (typeof payload?.toolName === 'string') return payload.toolName;
   return undefined;
 }
 
+/** Shell command across sources, used to route git / validation timeline lanes. */
 function bashCommandFromEvent(event: LoopwatchEvent): string | undefined {
-  const block = firstToolUseBlock(event);
-  const input = recordValue(block?.input);
-  if (typeof input?.command === 'string') return input.command;
+  const claudeInput = recordValue(firstToolUseBlock(event)?.input);
+  if (typeof claudeInput?.command === 'string') return claudeInput.command;
+
+  const piArgs = recordValue(firstPiToolCall(event)?.arguments);
+  if (typeof piArgs?.command === 'string') return piArgs.command;
+  const piBash = piBashCommand(event);
+  if (piBash !== undefined) return piBash;
+
+  const codex = codexToolInfo(event);
+  if (codex?.command) return codex.command;
   return undefined;
 }
 
+function messageContentBlocks(event: LoopwatchEvent): Record<string, unknown>[] {
+  const content = recordValue(payloadRecord(event)?.message)?.content;
+  if (!Array.isArray(content)) return [];
+  return content.map(recordValue).filter((block): block is Record<string, unknown> => block !== undefined);
+}
+
+/** Claude `tool_use` content block. */
 function firstToolUseBlock(event: LoopwatchEvent): Record<string, unknown> | undefined {
-  const payload = payloadRecord(event);
-  const message = recordValue(payload?.message);
-  const content = message?.content;
-  if (!Array.isArray(content)) return undefined;
-  return content.map(recordValue).find((block) => block?.type === 'tool_use');
+  return messageContentBlocks(event).find((block) => block.type === 'tool_use');
+}
+
+/** Pi `toolCall` content block. */
+function firstPiToolCall(event: LoopwatchEvent): Record<string, unknown> | undefined {
+  return messageContentBlocks(event).find((block) => block.type === 'toolCall');
+}
+
+/** Pi `bashExecution` message command. */
+function piBashCommand(event: LoopwatchEvent): string | undefined {
+  const message = recordValue(payloadRecord(event)?.message);
+  if (message?.role === 'bashExecution' && typeof message.command === 'string') return message.command;
+  return undefined;
+}
+
+/** Codex tool name + command, unpacked from the `{ type, payload }` envelope. */
+function codexToolInfo(event: LoopwatchEvent): { name?: string; command?: string } | undefined {
+  const inner = recordValue(payloadRecord(event)?.payload);
+  if (!inner) return undefined;
+
+  switch (inner.type) {
+    case 'function_call':
+    case 'custom_tool_call':
+    case 'web_search_call': {
+      const name = typeof inner.name === 'string' ? inner.name : undefined;
+      return { name, command: codexCommandFromArguments(inner.arguments) };
+    }
+    case 'exec_command_end': {
+      const command = Array.isArray(inner.command) ? inner.command.filter((part) => typeof part === 'string').join(' ') : undefined;
+      return { name: 'exec', command: command && command.length > 0 ? command : undefined };
+    }
+    case 'patch_apply_end':
+      return { name: 'apply_patch' };
+    default:
+      return undefined;
+  }
+}
+
+/** Codex `function_call` arguments carry the command (a JSON string, or `cmd`/`command`). */
+function codexCommandFromArguments(args: unknown): string | undefined {
+  const fromObject = (value: Record<string, unknown> | undefined): string | undefined => {
+    if (!value) return undefined;
+    if (typeof value.command === 'string') return value.command;
+    if (typeof value.cmd === 'string') return value.cmd;
+    if (Array.isArray(value.cmd)) return value.cmd.filter((part) => typeof part === 'string').join(' ') || undefined;
+    return undefined;
+  };
+
+  if (typeof args !== 'string') return fromObject(recordValue(args));
+  try {
+    return fromObject(recordValue(JSON.parse(args)));
+  } catch {
+    return undefined;
+  }
 }
 
 function payloadRecord(event: LoopwatchEvent): Record<string, unknown> | undefined {
