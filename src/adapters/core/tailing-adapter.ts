@@ -18,16 +18,24 @@ import { discoverTranscripts, readNewRecords, statWithRetry, type JsonlRecord } 
 /** Sink that commits a batch of normalized events. Throws on failure (cursor won't advance). */
 export type IngestFn = (events: LoopwatchEventInput[]) => Promise<void>;
 
+/** Per-record mapping context: the transcript's derived session id and its path. */
+export interface MapContext {
+  fileSessionId: string;
+  filePath: string;
+}
+
 /** Map one raw transcript record to one normalized event (ADR-0004, one-to-one, no-drop). */
-export type MapRecord = (record: JsonlRecord, context: { fileSessionId: string }) => LoopwatchEventInput;
+export type MapRecord = (record: JsonlRecord, context: MapContext) => LoopwatchEventInput;
 
 /**
  * Optional async post-map enrichment for a whole batch, run before ingest.
  * Used by sources that must resolve out-of-band context (e.g. inferring git
- * branch for Pi, whose transcript records no branch). Keeps {@link MapRecord}
- * synchronous and isolates I/O to one place.
+ * branch + repo for Pi, whose transcript records no branch). Keeps
+ * {@link MapRecord} synchronous and isolates I/O to one place. The `filePath`
+ * lets a source resolve per-file context (e.g. the session's cwd from the
+ * transcript head) and cache it.
  */
-export type EnrichBatch = (events: LoopwatchEventInput[]) => Promise<LoopwatchEventInput[]>;
+export type EnrichBatch = (events: LoopwatchEventInput[], context: { filePath: string }) => Promise<LoopwatchEventInput[]>;
 
 export interface TailingAdapterConfig {
   /** Source name emitted on every event (ADR-0003 identity, part 1). */
@@ -212,8 +220,8 @@ export class TailingAdapter {
     }
 
     const fileSessionId = this.sessionIdFromPath(path);
-    let events = read.records.map((record) => this.mapRecord(record, { fileSessionId }));
-    if (this.enrich && events.length > 0) events = await this.enrich(events);
+    let events = read.records.map((record) => this.mapRecord(record, { fileSessionId, filePath: path }));
+    if (this.enrich && events.length > 0) events = await this.enrich(events, { filePath: path });
 
     // Ingest first; only advance the cursor after the batch is committed.
     if (events.length > 0) await this.config.ingest(events);

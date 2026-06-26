@@ -169,3 +169,37 @@ export async function readNewRecords(path: string, cursor: TranscriptCursor): Pr
 
   return { records, newByteOffset: start + lastNewline + 1, bytesRead: lastNewline + 1, fileId, truncated };
 }
+
+/**
+ * Read and parse the first complete JSON line of a transcript. Sources stamp
+ * session-level context (cwd, git) on a head record (Pi `session`, Codex
+ * `session_meta`); when tailing from the end skips that line, an adapter can
+ * recover the cwd by reading the head once. Returns null if the file is
+ * missing, empty, or its first line isn't valid JSON.
+ */
+export async function readFirstRecord(path: string): Promise<JsonlRecord | null> {
+  const info = await statWithRetry(path);
+  if (!info || info.size === 0) return null;
+
+  const length = Math.min(info.size, 64 * 1024);
+  const buffer = Buffer.allocUnsafe(length);
+  const handle = await open(path, 'r');
+  let received: number;
+  try {
+    ({ bytesRead: received } = await handle.read(buffer, 0, length, 0));
+  } finally {
+    await handle.close();
+  }
+
+  const data = buffer.subarray(0, received);
+  const newline = data.indexOf(0x0a);
+  const slice = newline >= 0 ? data.subarray(0, newline) : data;
+  const text = slice.toString('utf8').trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' ? (parsed as JsonlRecord) : null;
+  } catch {
+    return null;
+  }
+}
