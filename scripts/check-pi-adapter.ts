@@ -115,11 +115,22 @@ await check('typed records map to normalized events: kind/actor, identity, no-dr
   assert.equal(payload.message?.usage?.cost?.total, 0.0123, 'cost is preserved (Pi-only capability)');
 });
 
+/** A throwaway git repo on a deterministic named branch (robust under detached-HEAD CI). */
+async function tempGitRepo(branch: string): Promise<{ root: string; repo: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'lw-pi-repo-'));
+  const run = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: 'ignore' });
+  run('init', '-q');
+  run('checkout', '-q', '-b', branch);
+  run('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '--allow-empty', '-m', 'init');
+  // git resolves the realpath (macOS /var → /private/var), so derive repo from it.
+  const toplevel = execFileSync('git', ['-C', dir, 'rev-parse', '--show-toplevel']).toString().trim();
+  return { root: dir, repo: toplevel.split('/').filter(Boolean).at(-1) ?? 'repo' };
+}
+
 await check('a Pi session (no in-transcript branch) gets repo + branch inferred from git', async () => {
   resetGitContextCache();
-  const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: process.cwd() }).toString().trim();
-  const expectedRepo = repoRoot.split('/').filter(Boolean).at(-1);
-  const expectedBranch = execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: process.cwd() }).toString().trim();
+  const expectedBranch = 'feat/pi-inference';
+  const { root: repoRoot, repo: expectedRepo } = await tempGitRepo(expectedBranch);
 
   const f = await fixture(repoRoot);
   await writeFile(
