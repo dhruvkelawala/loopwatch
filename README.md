@@ -90,26 +90,33 @@ Check the model in isolation (no server required):
 pnpm events:check
 ```
 
-### Claude Source Adapter
+### Source Adapters (Claude · Codex · Pi)
 
-The first Source Adapter ([`src/adapters/claude/`](./src/adapters/claude/), [ADR-0003](./docs/adr/0003-session-identity-follows-the-source.md) / [ADR-0009](./docs/adr/0009-session-liveness-and-freshness-risk.md)) tails Claude Code transcripts (`~/.claude/projects/**/*.jsonl`), maps each record to a normalized event, and batch-ingests them into the store. It keeps an idempotent per-transcript cursor (path · inode · byte offset · last uuid · parser version) so a restart resumes without re-emitting, tolerates partial trailing lines and rotation, and tracks liveness (`active → idle → ended`) on configurable thresholds.
+Every adapter shares one tail seam ([`src/adapters/core/`](./src/adapters/core/), [ADR-0003](./docs/adr/0003-session-identity-follows-the-source.md) / [ADR-0009](./docs/adr/0009-session-liveness-and-freshness-risk.md)): it tails a source's on-disk JSONL sessions, maps each record to a normalized event ([ADR-0004](./docs/adr/0004-normalized-event-shared-core-plus-extras.md)), and batch-ingests them. It keeps an idempotent per-file cursor (path · inode · byte offset · last id · parser version) so a restart resumes without re-emitting, tolerates partial trailing lines and rotation, and tracks liveness (`active → idle → ended`) on configurable thresholds. Each adapter supplies only its differences — its record→event mapping, filename→session-id rule, and **declared capabilities** (no fake parity):
 
-Run it against the live server (start `pnpm dev` first):
+- **Claude** ([`src/adapters/claude/`](./src/adapters/claude/)) — `~/.claude/projects/**/*.jsonl`; per-record `cwd` + `gitBranch`. Capabilities: transcript, tools.
+- **Codex** ([`src/adapters/codex/`](./src/adapters/codex/)) — `~/.codex/sessions/**/rollout-*.jsonl`; `{ type, payload, timestamp }` envelope; cwd + git from the head `session_meta`. Capabilities: transcript, tools, tokens.
+- **Pi** ([`src/adapters/pi/`](./src/adapters/pi/)) — `~/.pi/agent/sessions/**/*.jsonl`; typed records with a direct `$` cost (`usage.cost.total`) but no in-transcript branch — repo + branch are inferred from git ([ADR-0008](./docs/adr/0008-git-watcher-scoped-to-active-sessions.md)). Capabilities: transcript, tools, tokens, cost, diagnostics.
+
+Missing data renders as **unavailable** in the Cockpit, never blank or faked. Run an adapter against the live server (start `pnpm dev` first):
 
 ```sh
-pnpm adapter:claude
+pnpm adapter:claude   # or: pnpm adapter:codex · pnpm adapter:pi
 ```
 
 Checks:
 
 ```sh
-pnpm adapter:check   # pure: mapping, identity/context, cursor idempotency, live append, liveness (no server)
-pnpm ingest:check    # integration: adapter → record-events → durable store, live append without restart
+pnpm adapter:check        # Claude: mapping, identity/context, cursor idempotency, live append, liveness
+pnpm codex:check          # Codex: envelope mapping, filename identity, no-drop, idempotent cursor
+pnpm pi:check             # Pi: typed mapping, cost no-drop, git-inferred repo/branch, idempotent cursor
+pnpm cockpit:caps:check   # Cockpit: honest capability badges + tokens/cost, "unavailable" never faked
+pnpm ingest:check         # integration: adapter → record-events → durable store, live append without restart
 ```
 
 ### Cockpit (desktop shell)
 
-The Cockpit is the Watchtower UI ([`ui/`](./ui/)) hosted inside a Tauri desktop shell ([`src-tauri/`](./src-tauri/)), per [ADR-0007](./docs/adr/0007-deployment-shape-flue-node-engine-tauri-shell.md). The shell owns the background observation processes: on launch it spawns `node dist/server.mjs` (the built engine) on port `3583` plus `node dist/adapter-claude.mjs` (the Claude Source Adapter), and on quit it stops both children.
+The Cockpit is the Watchtower UI ([`ui/`](./ui/)) hosted inside a Tauri desktop shell ([`src-tauri/`](./src-tauri/)), per [ADR-0007](./docs/adr/0007-deployment-shape-flue-node-engine-tauri-shell.md). The shell owns the background observation processes: on launch it spawns `node dist/server.mjs` (the built engine) on port `3583` plus the three Source Adapters (`node dist/adapter-{claude,codex,pi}.mjs`), and on quit it stops every child. Disable any adapter with `LOOPWATCH_{CLAUDE,CODEX,PI}_ADAPTER=0`.
 
 Run the Slice 5 live Cockpit proof (fixture Claude transcript → adapter → Flue runs → Cockpit projection):
 

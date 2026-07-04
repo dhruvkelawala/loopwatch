@@ -18,22 +18,56 @@ const COCKPIT_WINDOW_LABEL: &str = "cockpit";
 /// to this port, so it is intentionally not user-overridable.
 const ENGINE_PORT: &str = "3583";
 
-/// Env switch for disabling adapter supervision in local diagnostics.
-const CLAUDE_ADAPTER_ENV: &str = "LOOPWATCH_CLAUDE_ADAPTER";
+/// A supervised Source Adapter: its display label, built artifact, and the env
+/// switch that disables it in local diagnostics. Each adapter tails one
+/// source's on-disk sessions and ingests normalized events (issue #11).
+struct AdapterSpec {
+    label: &'static str,
+    artifact: &'static str,
+    env: &'static str,
+}
+
+/// The adapters the shell supervises. All enabled by default; set the matching
+/// env var to `0`/`false`/`off`/`no` to disable one.
+const ADAPTERS: &[AdapterSpec] = &[
+    AdapterSpec { label: "Claude adapter", artifact: "dist/adapter-claude.mjs", env: "LOOPWATCH_CLAUDE_ADAPTER" },
+    AdapterSpec { label: "Codex adapter", artifact: "dist/adapter-codex.mjs", env: "LOOPWATCH_CODEX_ADAPTER" },
+    AdapterSpec { label: "Pi adapter", artifact: "dist/adapter-pi.mjs", env: "LOOPWATCH_PI_ADAPTER" },
+];
+
+/// A running adapter child paired with its label, for orderly shutdown logging.
+struct AdapterChild {
+    label: String,
+    child: Child,
+}
 
 struct BackgroundProcesses {
     engine: Mutex<Option<Child>>,
-    claude_adapter: Mutex<Option<Child>>,
+    adapters: Mutex<Vec<AdapterChild>>,
 }
 
 impl BackgroundProcesses {
     /// Stop background children, reaping each process.
     ///
-    /// Safe to call more than once: each child handle is taken out on the first
-    /// call, so later calls (e.g. the `Drop` fallback) become no-ops.
+    /// Safe to call more than once: adapters are drained on the first call and
+    /// the engine handle is taken out, so later calls (e.g. the `Drop`
+    /// fallback) become no-ops.
     fn stop(&self) {
-        self.stop_child("Claude adapter", &self.claude_adapter);
+        self.stop_adapters();
         self.stop_child("Flue engine", &self.engine);
+    }
+
+    /// Terminate every supervised adapter, then clear the list so a second call
+    /// (the `Drop` fallback) is a no-op.
+    fn stop_adapters(&self) {
+        let mut adapters = match self.adapters.lock() {
+            Ok(adapters) => adapters,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        for adapter in adapters.iter_mut() {
+            terminate_child(&adapter.label, &mut adapter.child);
+        }
+        adapters.clear();
     }
 
     fn stop_child(&self, label: &str, slot: &Mutex<Option<Child>>) {
@@ -156,17 +190,27 @@ fn show_cockpit(app_handle: &tauri::AppHandle) {
 fn spawn_background_processes() -> Result<BackgroundProcesses, Box<dyn std::error::Error>> {
     let project_root = project_root()?;
     let mut engine = spawn_flue_engine(&project_root)?;
-    let claude_adapter = match spawn_claude_adapter(&project_root) {
-        Ok(adapter) => adapter,
-        Err(error) => {
-            terminate_child("Flue engine", &mut engine);
-            return Err(error);
+    let mut adapters: Vec<AdapterChild> = Vec::new();
+
+    for spec in ADAPTERS {
+        match spawn_adapter(&project_root, spec) {
+            Ok(Some(child)) => adapters.push(AdapterChild { label: spec.label.to_string(), child }),
+            Ok(None) => {}
+            Err(error) => {
+                // One adapter failing to start tears the whole launch down so we
+                // never leave a half-supervised set of children orphaned.
+                for adapter in adapters.iter_mut() {
+                    terminate_child(&adapter.label, &mut adapter.child);
+                }
+                terminate_child("Flue engine", &mut engine);
+                return Err(error);
+            }
         }
-    };
+    }
 
     Ok(BackgroundProcesses {
         engine: Mutex::new(Some(engine)),
-        claude_adapter: Mutex::new(claude_adapter),
+        adapters: Mutex::new(adapters),
     })
 }
 
@@ -207,16 +251,17 @@ fn spawn_flue_engine(project_root: &Path) -> Result<Child, Box<dyn std::error::E
     Ok(child)
 }
 
-fn spawn_claude_adapter(project_root: &Path) -> Result<Option<Child>, Box<dyn std::error::Error>> {
-    if !claude_adapter_enabled() {
-        println!("[loopwatch] Claude adapter disabled by {CLAUDE_ADAPTER_ENV}");
+fn spawn_adapter(project_root: &Path, spec: &AdapterSpec) -> Result<Option<Child>, Box<dyn std::error::Error>> {
+    if !adapter_enabled(spec.env) {
+        println!("[loopwatch] {} disabled by {}", spec.label, spec.env);
         return Ok(None);
     }
 
-    let adapter_path = project_root.join("dist/adapter-claude.mjs");
+    let adapter_path = project_root.join(spec.artifact);
     if !adapter_path.exists() {
         return Err(format!(
-            "Claude adapter artifact is missing at {}. Run `pnpm build` before launching Loopwatch.",
+            "{} artifact is missing at {}. Run `pnpm build` before launching Loopwatch.",
+            spec.label,
             adapter_path.display()
         )
         .into());
@@ -234,16 +279,16 @@ fn spawn_claude_adapter(project_root: &Path) -> Result<Option<Child>, Box<dyn st
 
     thread::sleep(Duration::from_millis(250));
     if let Some(status) = child.try_wait()? {
-        return Err(format!("Claude adapter exited during startup with status {status}.").into());
+        return Err(format!("{} exited during startup with status {status}.", spec.label).into());
     }
 
-    println!("[loopwatch] spawned Claude adapter pid={}", child.id());
+    println!("[loopwatch] spawned {} pid={}", spec.label, child.id());
 
     Ok(Some(child))
 }
 
-fn claude_adapter_enabled() -> bool {
-    match env::var(CLAUDE_ADAPTER_ENV) {
+fn adapter_enabled(var: &str) -> bool {
+    match env::var(var) {
         Ok(value) => !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"),
         Err(_) => true,
     }

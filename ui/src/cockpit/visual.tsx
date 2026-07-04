@@ -1,4 +1,7 @@
+import { CAPABILITY_LABEL, type Capability } from './capabilities';
 import type { Liveness, Severity } from '../loopwatch-events';
+
+const CAPABILITY_ORDER: Capability[] = ['transcript', 'tools', 'tokens', 'cost', 'diagnostics'];
 
 export function BrandGlyph({ className }: { className?: string }) {
   return (
@@ -29,6 +32,65 @@ export function SeverityBadge({ severity }: { severity: Severity }) {
       {severityLabel[severity]}
     </span>
   );
+}
+
+/** Compact, honest capability badges — one chip per declared capability (no fake parity). */
+export function CapabilityBadges({ capabilities }: { capabilities: Capability[] }) {
+  const declared = new Set(capabilities);
+  const ordered = CAPABILITY_ORDER.filter((capability) => declared.has(capability));
+  if (ordered.length === 0) return null;
+
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      {ordered.map((capability) => (
+        <span
+          key={capability}
+          className="rounded-[4px] bg-watch-code px-1.5 py-[1.5px] font-mono text-[9px] uppercase tracking-[.04em] text-watch-ink-2"
+          title={`${capability} provided by this source`}
+        >
+          {CAPABILITY_LABEL[capability]}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+/**
+ * Usage meter for a session row: prefers the source's headline metric (Pi's
+ * direct cost), else token count. Renders the real value, or "n/a" when the
+ * capability is declared but no data has arrived yet — never a faked zero.
+ */
+export function UsageMeter({
+  capabilities,
+  tokens,
+  cost,
+}: {
+  capabilities: Capability[];
+  tokens: number | null;
+  cost: number | null;
+}) {
+  const declared = new Set(capabilities);
+  if (declared.has('cost')) {
+    return <span className="font-mono text-[10px] text-watch-accent" title="direct cost">{cost === null ? 'n/a' : formatCost(cost)}</span>;
+  }
+  if (declared.has('tokens')) {
+    return <span className="font-mono text-[10px] text-watch-ink-2" title="token usage">{tokens === null ? 'n/a' : `${formatTokens(tokens)} tok`}</span>;
+  }
+  return null;
+}
+
+/** Compact token count, e.g. `33.5k`, `1.2M`. */
+export function formatTokens(tokens: number): string {
+  if (tokens < 1000) return String(Math.round(tokens));
+  if (tokens < 1_000_000) return `${(tokens / 1000).toFixed(tokens < 10_000 ? 1 : 0)}k`;
+  return `${(tokens / 1_000_000).toFixed(1)}M`;
+}
+
+/** Direct cost in USD, e.g. `$1.84`, `$0.0123`. */
+export function formatCost(cost: number): string {
+  if (cost === 0) return '$0.00';
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  return `$${cost.toFixed(2)}`;
 }
 
 export function LivenessPill({ liveness }: { liveness: Liveness }) {

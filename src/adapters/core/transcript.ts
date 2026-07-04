@@ -5,7 +5,17 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import type { TranscriptCursor } from './cursor.js';
-import type { ClaudeRecord } from './types.js';
+
+/**
+ * Generic JSONL-transcript tailing primitives, shared by every Source Adapter
+ * (issue #11). The Claude adapter (issue #5) was the first consumer; these
+ * helpers are source-agnostic so Codex and Pi reuse exactly the same robust
+ * tail (partial-line holding, rotation re-anchoring, corrupt-line skip).
+ *
+ * A record is just an untyped JSON object — adapters preserve the full raw
+ * record verbatim (ADR-0004 no-drop) and read only the fields they model.
+ */
+export type JsonlRecord = Record<string, unknown>;
 
 /** Expand a leading `~` to the user's home directory. */
 export function expandHome(path: string): string {
@@ -15,11 +25,13 @@ export function expandHome(path: string): string {
 }
 
 /**
- * Recursively discover transcript files under a root. Claude shards by project
- * slug, so a flat read misses everything — we walk the tree for `*.jsonl`.
- * A missing root is treated as "no transcripts yet", not an error.
+ * Recursively discover transcript files under a root. Sources shard by
+ * project/date directories, so a flat read misses everything — we walk the tree
+ * for `*.jsonl`. An optional `accept` predicate narrows to a source's naming
+ * convention (e.g. Codex `rollout-*.jsonl`). A missing root is treated as "no
+ * transcripts yet", not an error.
  */
-export async function discoverTranscripts(root: string): Promise<string[]> {
+export async function discoverTranscripts(root: string, accept?: (name: string) => boolean): Promise<string[]> {
   const base = expandHome(root);
   const found: string[] = [];
 
@@ -34,7 +46,7 @@ export async function discoverTranscripts(root: string): Promise<string[]> {
     for await (const entry of handle) {
       const full = join(dir, entry.name);
       if (entry.isDirectory()) await walk(full);
-      else if (entry.isFile() && entry.name.endsWith('.jsonl')) found.push(full);
+      else if (entry.isFile() && entry.name.endsWith('.jsonl') && (!accept || accept(entry.name))) found.push(full);
     }
   }
 
@@ -66,7 +78,7 @@ export async function statWithRetry(path: string): Promise<Stats | null> {
 
 export interface ReadResult {
   /** Records parsed from complete lines since the cursor offset. */
-  records: ClaudeRecord[];
+  records: JsonlRecord[];
   /** Offset to persist: advances only past complete lines (partial trailing line is held). */
   newByteOffset: number;
   /** Bytes of complete lines consumed this read (0 when only a partial line was available). */
@@ -80,7 +92,7 @@ export interface ReadResult {
 /**
  * Read new complete records from a transcript, starting at the cursor offset.
  *
- * Robustness guarantees (issue #5):
+ * Robustness guarantees (issue #5, reused for all sources):
  *   - **Partial trailing line:** only consumes up to the last newline; an
  *     incomplete final record is left for the next read (offset not advanced
  *     past it), so a mid-write append is never parsed half-written.
@@ -143,17 +155,51 @@ export async function readNewRecords(path: string, cursor: TranscriptCursor): Pr
   }
 
   const completeText = data.subarray(0, lastNewline + 1).toString('utf8');
-  const records: ClaudeRecord[] = [];
+  const records: JsonlRecord[] = [];
   for (const line of completeText.split('\n')) {
     const trimmed = line.trim();
     if (!trimmed) continue;
     try {
       const parsed = JSON.parse(trimmed);
-      if (parsed && typeof parsed === 'object') records.push(parsed as ClaudeRecord);
+      if (parsed && typeof parsed === 'object') records.push(parsed as JsonlRecord);
     } catch {
       // Corrupt but complete line: skip it; offset still advances past it below.
     }
   }
 
   return { records, newByteOffset: start + lastNewline + 1, bytesRead: lastNewline + 1, fileId, truncated };
+}
+
+/**
+ * Read and parse the first complete JSON line of a transcript. Sources stamp
+ * session-level context (cwd, git) on a head record (Pi `session`, Codex
+ * `session_meta`); when tailing from the end skips that line, an adapter can
+ * recover the cwd by reading the head once. Returns null if the file is
+ * missing, empty, or its first line isn't valid JSON.
+ */
+export async function readFirstRecord(path: string): Promise<JsonlRecord | null> {
+  const info = await statWithRetry(path);
+  if (!info || info.size === 0) return null;
+
+  const length = Math.min(info.size, 64 * 1024);
+  const buffer = Buffer.allocUnsafe(length);
+  const handle = await open(path, 'r');
+  let received: number;
+  try {
+    ({ bytesRead: received } = await handle.read(buffer, 0, length, 0));
+  } finally {
+    await handle.close();
+  }
+
+  const data = buffer.subarray(0, received);
+  const newline = data.indexOf(0x0a);
+  const slice = newline >= 0 ? data.subarray(0, newline) : data;
+  const text = slice.toString('utf8').trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' ? (parsed as JsonlRecord) : null;
+  } catch {
+    return null;
+  }
 }
