@@ -31,6 +31,7 @@
     "harness:source-smoke": "tsx scripts/check-source-smoke.ts",
     "harness:eval:live": "tsx scripts/check-live-eval.ts",
     "e2e:cockpit": "tsx scripts/run-cockpit-e2e.ts",
+    "upgrades:check": "tsx scripts/check-upgrades-inbox.ts",
     "dev:data:reset": "tsx scripts/reset-dev-data.ts",
     "test": "tsx scripts/check-normalized-event.ts && tsx scripts/check-claude-adapter.ts",
     "tsc": "tsc --noEmit"

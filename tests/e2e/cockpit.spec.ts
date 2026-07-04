@@ -7,6 +7,7 @@ import {
   noActionInterventionCockpitEngineFixture,
   postSessionInsightCockpitEngineFixture,
   pivotCockpitEngineFixture,
+  upgradesCockpitEngineFixture,
   securedCockpitEngineFixture,
 } from '../support/cockpit-fixture.js';
 
@@ -311,6 +312,37 @@ test('Cockpit renders post-session coaching as a Coaching Card separate from Int
   await expect(coachingCard).toContainText('pnpm convergence:check exited 1');
   await expect(coachingCard).toContainText('run pnpm convergence:check until it passes');
   await expect(page.getByLabel('Intervention Card')).toHaveCount(0);
+});
+
+test('Upgrades inbox renders repeated blind spots as proposal-only cards separate from Intervention Cards', async ({ page }) => {
+  await routeCockpitFixture(page, upgradesCockpitEngineFixture);
+
+  await page.goto('/');
+
+  const inspector = page.locator('aside', { hasText: 'Evidence inspector' });
+  const upgradesInbox = inspector.getByLabel('Upgrades inbox');
+  await expect(upgradesInbox).toBeVisible();
+  await expect(upgradesInbox).toContainText('Upgrades inbox');
+
+  const upgradeCards = upgradesInbox.getByLabel('Upgrade Card');
+  await expect(upgradeCards).toHaveCount(2);
+
+  const capabilityCard = upgradeCards.filter({ hasText: 'Claude cost capability gap' });
+  await expect(capabilityCard).toContainText('2 sessions reported cost unavailable');
+  await expect(capabilityCard).toContainText('Claude adapter does not provide direct cost');
+  await expect(capabilityCard).toContainText('Add real cost evidence to the Claude Source Adapter');
+  await expect(capabilityCard).toContainText('available only when real source data is present');
+
+  const unknownKindCard = upgradeCards.filter({ hasText: 'Unknown event kind: assistant_event.delta' });
+  await expect(unknownKindCard).toContainText('2 sessions preserved unknown event kind "assistant_event.delta" from Claude');
+  await expect(unknownKindCard).toContainText('first-class Loopwatch Event kind');
+  await expect(unknownKindCard).toContainText('still preserve source-native payload fields');
+
+  await expect(upgradesInbox).toContainText(/propose-only|proposal only|human-approved/i);
+  await expect(upgradesInbox.getByRole('button')).toHaveCount(0);
+  await expect(upgradesInbox).not.toContainText(/Loopwatch will (?:edit|install|open (?:a )?PR|change settings)/i);
+  await expect(page.getByLabel('Intervention Card')).toHaveCount(0);
+  await expect(page.locator('main > section > section').getByLabel('Upgrade Card')).toHaveCount(0);
 });
 
 test('Pivot nudges default to a calm session marker and loud mode surfaces an interruptive Cockpit card', async ({ page }) => {

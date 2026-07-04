@@ -107,6 +107,17 @@ const baselineChecks: VerificationCheck[] = [
     ],
   },
   {
+    name: 'Upgrades inbox contract',
+    command: ['pnpm', 'upgrades:check'],
+    issues: ['#17'],
+    adrs: ['ADR-0005', 'ADR-0004'],
+    proves: [
+      'single blind spots remain below the Upgrade Card evidence threshold',
+      'repeated capability gaps produce propose-only Upgrade Cards with source, count, and acceptance criteria',
+      'repeated unknown event kinds produce propose-only Upgrade Cards that preserve source-native evidence',
+    ],
+  },
+  {
     name: 'Layered alerting contract',
     command: ['pnpm', 'alerting:check'],
     issues: ['#10'],

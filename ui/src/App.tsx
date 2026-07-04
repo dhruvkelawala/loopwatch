@@ -7,6 +7,7 @@ import { SessionRail } from './cockpit/session-rail';
 import { useCockpitSessionModel } from './cockpit/session-model';
 import { Timeline } from './cockpit/timeline';
 import { TitleBar } from './cockpit/title-bar';
+import { upgradeCardsForSessions } from './cockpit/upgrades';
 import type { EngineRuntime } from './engine-runtime';
 import type { SessionView } from './loopwatch-events';
 
@@ -18,6 +19,7 @@ export function App({ engineRuntime }: { engineRuntime: EngineRuntime }) {
   const sessionModel = useCockpitSessionModel(live.events, live.convergenceSessions);
   const interventionCard = interventionCardForSession(sessionModel.selected, dismissedInterventionIds);
   const loopRecommendation = useLoopRecommendation(engineRuntime, selectedTask(sessionModel.selected));
+  const upgradeCards = upgradeCardsForSessions(sessionModel.sessions);
   const focusedTimelineItemId = interventionCard && focusedInterventionId === interventionCard.id ? interventionCard.timelineItemId : undefined;
 
   const inspectIntervention = (card: InterventionCardModel) => {
@@ -59,6 +61,7 @@ export function App({ engineRuntime }: { engineRuntime: EngineRuntime }) {
             convergenceState={live.convergenceState}
             focusedEvidenceKey={focusedInterventionId}
             loopRecommendation={loopRecommendation}
+            upgradeCards={upgradeCards}
           />
         </section>
 

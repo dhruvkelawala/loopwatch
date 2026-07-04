@@ -669,6 +669,155 @@ export const postSessionInsightCockpitEngineFixture = {
   ],
 } as const;
 
+export const upgradesCockpitEngineFixture = {
+  health: {
+    ok: true,
+    service: 'loopwatch-upgrades-fixture-engine',
+    target: 'playwright',
+  },
+  runs: {
+    ok: true,
+    runs: [
+      {
+        runId: 'run-upgrades-evidence',
+        workflowName: 'record-events',
+        status: 'completed',
+        startedAt: '2026-07-04T15:00:00.000Z',
+        endedAt: '2026-07-04T15:00:09.000Z',
+        durationMs: 9000,
+      },
+    ],
+    nextPollMs: 1000,
+  },
+  convergence: {
+    ok: true,
+    sessions: [],
+    spend: {
+      cheapCalls: 0,
+      strongCalls: 0,
+      totalCalls: 0,
+      estimatedTokens: 0,
+      estimatedCostUsd: 0,
+    },
+    nextPollMs: 2_000,
+  },
+  runEvents: [
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'upgrade-gap-alpha',
+        timestamp: '2026-07-04T15:00:00.000Z',
+        kind: 'message',
+        actor: { type: 'user' },
+        context: { cwd: '/Users/d/dev/loopwatch/upgrade-alpha', repo: 'loopwatch', gitBranch: 'issue-17-alpha' },
+        payload: { id: 'upgrade-alpha-goal', content: 'Ship issue #17 Upgrades inbox with propose-only cards.' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'upgrade-gap-alpha',
+        timestamp: '2026-07-04T15:00:01.000Z',
+        kind: 'tool_call',
+        actor: { type: 'agent', name: 'bash' },
+        context: { cwd: '/Users/d/dev/loopwatch/upgrade-alpha', repo: 'loopwatch', gitBranch: 'issue-17-alpha' },
+        payload: { id: 'upgrade-alpha-check', toolName: 'bash', command: 'pnpm e2e:cockpit' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'upgrade-gap-alpha',
+        timestamp: '2026-07-04T15:00:02.000Z',
+        kind: 'usage',
+        actor: { type: 'system' },
+        context: { cwd: '/Users/d/dev/loopwatch/upgrade-alpha', repo: 'loopwatch', gitBranch: 'issue-17-alpha' },
+        payload: { id: 'upgrade-alpha-usage', usage: { totalTokens: 1440 } },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'upgrade-gap-alpha',
+        timestamp: '2026-07-04T15:00:03.000Z',
+        kind: 'assistant_event.delta',
+        actor: { type: 'system' },
+        context: { cwd: '/Users/d/dev/loopwatch/upgrade-alpha', repo: 'loopwatch', gitBranch: 'issue-17-alpha' },
+        payload: {
+          id: 'upgrade-alpha-unknown',
+          nativeType: 'assistant_event.delta',
+          fragment: 'assistant streamed an event shape Loopwatch does not parse yet',
+        },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'upgrade-gap-beta',
+        timestamp: '2026-07-04T15:00:05.000Z',
+        kind: 'message',
+        actor: { type: 'user' },
+        context: { cwd: '/Users/d/dev/loopwatch/upgrade-beta', repo: 'loopwatch', gitBranch: 'issue-17-beta' },
+        payload: { id: 'upgrade-beta-goal', content: 'Add a second session so blind spots accumulate over time.' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'upgrade-gap-beta',
+        timestamp: '2026-07-04T15:00:06.000Z',
+        kind: 'tool_call',
+        actor: { type: 'agent', name: 'bash' },
+        context: { cwd: '/Users/d/dev/loopwatch/upgrade-beta', repo: 'loopwatch', gitBranch: 'issue-17-beta' },
+        payload: { id: 'upgrade-beta-check', toolName: 'bash', command: 'pnpm upgrades:check' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'upgrade-gap-beta',
+        timestamp: '2026-07-04T15:00:07.000Z',
+        kind: 'usage',
+        actor: { type: 'system' },
+        context: { cwd: '/Users/d/dev/loopwatch/upgrade-beta', repo: 'loopwatch', gitBranch: 'issue-17-beta' },
+        payload: { id: 'upgrade-beta-usage', usage: { totalTokens: 1560 } },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'upgrade-gap-beta',
+        timestamp: '2026-07-04T15:00:08.000Z',
+        kind: 'assistant_event.delta',
+        actor: { type: 'system' },
+        context: { cwd: '/Users/d/dev/loopwatch/upgrade-beta', repo: 'loopwatch', gitBranch: 'issue-17-beta' },
+        payload: {
+          id: 'upgrade-beta-unknown',
+          nativeType: 'assistant_event.delta',
+          fragment: 'another preserved assistant-native event delta',
+        },
+      },
+    },
+  ],
+} as const;
+
+
 export function validateCockpitEngineFixture(): void {
   EngineHealthSchema.parse(cockpitEngineFixture.health);
   LoopwatchRunsResponseSchema.parse(cockpitEngineFixture.runs);
@@ -698,4 +847,9 @@ export function validateCockpitEngineFixture(): void {
   ConvergenceResponseSchema.parse(postSessionInsightCockpitEngineFixture.convergence);
   z.literal(1).parse(postSessionInsightCockpitEngineFixture.convergence.sessions.length);
   z.literal(3).parse(postSessionInsightCockpitEngineFixture.runEvents.length);
+  EngineHealthSchema.parse(upgradesCockpitEngineFixture.health);
+  LoopwatchRunsResponseSchema.parse(upgradesCockpitEngineFixture.runs);
+  ConvergenceResponseSchema.parse(upgradesCockpitEngineFixture.convergence);
+  z.literal(0).parse(upgradesCockpitEngineFixture.convergence.sessions.length);
+  z.literal(8).parse(upgradesCockpitEngineFixture.runEvents.length);
 }

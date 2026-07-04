@@ -3,6 +3,7 @@ import type { Severity, SessionView } from '../loopwatch-events';
 import { healthEndpoint, loopwatchConvergenceEndpoint, loopwatchRunsEndpoint } from './endpoints';
 import type { ConvergenceBridgeState, RunBridgeState } from './live-replay';
 import type { LoopRecommendationState } from './loop-recommendation';
+import type { UpgradeCard } from './upgrades';
 import { interventionEvidenceKey } from './intervention-card';
 
 export function EvidenceInspector({
@@ -12,6 +13,7 @@ export function EvidenceInspector({
   convergenceState,
   focusedEvidenceKey,
   loopRecommendation,
+  upgradeCards,
 }: {
   session: SessionView | undefined;
   flueBaseUrl: string;
@@ -19,6 +21,7 @@ export function EvidenceInspector({
   convergenceState: ConvergenceBridgeState;
   focusedEvidenceKey?: string;
   loopRecommendation: LoopRecommendationState;
+  upgradeCards: UpgradeCard[];
 }) {
   return (
     <aside className="min-h-0 overflow-auto border-l border-watch-line bg-gradient-to-b from-watch-panel to-watch-panel-2 max-[980px]:hidden">
@@ -48,6 +51,10 @@ export function EvidenceInspector({
 
       <EvidenceCard title="Coaching recommendation" number="05">
         <EvidenceDetails rows={loopRecommendationRows(loopRecommendation)} />
+      </EvidenceCard>
+
+      <EvidenceCard title="Upgrades inbox" number="06">
+        <UpgradeInbox cards={upgradeCards} />
       </EvidenceCard>
 
       <div className="mx-3 my-3 border-l-2 border-severity-watch py-0.5 pl-3 text-[11.5px] leading-[1.65] text-watch-ink-2">
@@ -161,6 +168,29 @@ function loopRecommendationRows(recommendation: LoopRecommendationState): Eviden
   ];
 }
 
+function UpgradeInbox({ cards }: { cards: UpgradeCard[] }) {
+  if (cards.length === 0) return <p className="text-[11.5px] leading-[1.65] text-watch-ink-2">No repeated Loopwatch blind spots detected yet.</p>;
+
+  return (
+    <div className="grid gap-3">
+      <p className="text-[11.5px] leading-[1.6] text-watch-ink-2">Human-approved proposals only. Loopwatch will not edit itself, install hooks, change settings, or open PRs.</p>
+      {cards.map((card) => (
+        <section aria-label="Upgrade Card" className="rounded-[8px] border border-watch-line bg-watch-code p-2.5" key={card.id}>
+          <div className="font-mono text-[10px] font-semibold uppercase tracking-[.12em] text-watch-ink-3">Upgrade Card</div>
+          <h3 className="mt-1 text-[12.5px] font-semibold text-watch-ink">{card.title}</h3>
+          <p className="mt-2 text-[11.5px] leading-[1.55] text-watch-ink-2">{card.evidence}</p>
+          <p className="mt-2 text-[11.5px] leading-[1.55] text-watch-ink">{card.suggestedUpgrade}</p>
+          <ul className="mt-2 grid gap-1 text-[11px] leading-[1.5] text-watch-ink-2">
+            {card.acceptanceCriteria.map((criterion) => (
+              <li key={criterion}>- {criterion}</li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function CopyPrompt({ value }: { value: string }) {
   return (
     <div className="grid gap-2">
@@ -198,7 +228,7 @@ function EvidenceCard({ children, title, number, tone }: { children: ReactNode; 
   const titleClass = tone === 'intervention' ? 'text-status-intervention-title' : 'text-watch-ink';
 
   return (
-    <article className={`m-3 rounded-[10px] border p-3.5 shadow-watch-card ${toneClass}`}>
+    <article aria-label={title} className={`m-3 rounded-[10px] border p-3.5 shadow-watch-card ${toneClass}`}>
       <div className={`mb-3 flex items-center border-b border-watch-line pb-2 font-mono text-[10px] font-semibold uppercase tracking-[.1em] ${titleClass}`}>
         {title}
         <span className="ml-auto font-normal tracking-normal text-watch-ink-3">{number}</span>

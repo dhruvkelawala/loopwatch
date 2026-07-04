@@ -40,6 +40,7 @@ export function useCockpitSessionModel(events: LoopwatchEvent[], convergenceSess
   }, [selectedId, sessions]);
 
   return {
+    sessions,
     groupedSessions: groupSessionsByRepo(sessions),
     selected: sessions.find((session) => session.id === selectedId) ?? sessions[0],
     selectedId,
