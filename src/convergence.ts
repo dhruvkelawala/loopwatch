@@ -1,0 +1,564 @@
+import { sessionKey, type LoopwatchEvent } from './events.js';
+
+export type ConvergenceStatus = 'calm' | 'watch' | 'intervention';
+export type ConvergenceLiveness = 'active' | 'idle' | 'ended';
+export type JudgeTier = 'cheap' | 'strong';
+export type ConvergenceSignal = 'drift' | 'burn' | 'weak_validation' | 'churn' | 'completion_without_evidence';
+
+export interface ConvergenceEvidenceRef {
+  eventId: string;
+  timestamp: string;
+  kind: string;
+  severity: ConvergenceStatus;
+  signal: ConvergenceSignal;
+  title: string;
+  detail: string;
+  recommendedAction?: string;
+}
+
+export interface RunningSummary {
+  goal: string;
+  done: string[];
+  validation: string[];
+  concerns: string[];
+}
+
+export interface ConvergenceSpend {
+  cheapCalls: number;
+  strongCalls: number;
+  totalCalls: number;
+  estimatedTokens: number;
+  estimatedCostUsd: number;
+}
+
+export interface JudgeCadence {
+  provider: 'deterministic-fake-v1';
+  lastTier?: JudgeTier;
+  lastRunAt?: string;
+  nextEligibleAt?: string;
+  lastReason?: string;
+  rateCapMs: number;
+}
+
+export interface SessionConvergenceState {
+  id: string;
+  source: string;
+  sessionId: string;
+  status: ConvergenceStatus;
+  liveness: ConvergenceLiveness;
+  summary: RunningSummary;
+  evidence: ConvergenceEvidenceRef[];
+  judge: JudgeCadence;
+  spend: ConvergenceSpend;
+  eventCount: number;
+  meaningfulEventCount: number;
+  lastEventAt: string;
+}
+
+export interface ConvergenceSnapshot {
+  sessions: SessionConvergenceState[];
+  spend: ConvergenceSpend;
+  nextPollMs: number;
+}
+
+export interface ConvergenceConfig {
+  nowMs?: number;
+  minJudgeIntervalMs?: number;
+  idleAfterMs?: number;
+  endedAfterMs?: number;
+  burnTokenThreshold?: number;
+  registry?: ConvergenceWatcherRegistry;
+}
+
+interface ConvergenceWatcherMemory {
+  lastJudgedCursor: string;
+  lastJudgedAtMs?: number;
+  lastTier?: JudgeTier;
+  lastReason?: string;
+  status: ConvergenceStatus;
+  evidence: ConvergenceEvidenceRef[];
+  spend: ConvergenceSpend;
+}
+
+export interface ConvergenceWatcherRegistry {
+  sessions: Map<string, ConvergenceWatcherMemory>;
+  retiredSpendBySession: Map<string, ConvergenceSpend>;
+}
+
+const DEFAULT_MIN_JUDGE_INTERVAL_MS = 30_000;
+const DEFAULT_IDLE_AFTER_MS = 5 * 60_000;
+const DEFAULT_ENDED_AFTER_MS = 30 * 60_000;
+const DEFAULT_BURN_TOKEN_THRESHOLD = 20_000;
+const NEXT_POLL_MS = 2_000;
+const CHEAP_TOKENS_PER_CALL = 350;
+const STRONG_TOKENS_PER_CALL = 1_400;
+const CHEAP_COST_USD_PER_CALL = 0.00007;
+const STRONG_COST_USD_PER_CALL = 0.0014;
+const MAX_SUMMARY_ITEMS = 5;
+
+const completionPattern = /\b(done|complete(?:d)?|finished|implemented|fixed|shipped|ready)\b/i;
+const driftPattern = /\b(unrelated|different task|off[- ]?track|wrong goal|instead of)\b/i;
+const validationCommandPattern = /\b(test|verify|lint|typecheck|tsc|build|cargo\s+test|go\s+test|pytest|vitest|jest|playwright|cypress|harness|check)\b/i;
+const fileToolNames: Record<string, true> = { edit: true, write: true, multiedit: true, patch: true };
+
+const recommendedActions: Record<ConvergenceSignal, string> = {
+  drift: 'Restate the active goal, or explicitly pivot before continuing.',
+  burn: 'Pause the run, summarize the current state, and choose a smaller next step before spending more judge calls.',
+  weak_validation: 'Inspect the failing validation, fix the failure, and rerun the exact check before claiming convergence.',
+  churn: 'Stop retrying the same failing path; explain the repeated failure and pick a different repair strategy.',
+  completion_without_evidence: 'Run or cite the expected verification evidence before closing the session.',
+};
+
+const defaultRegistry: ConvergenceWatcherRegistry = createConvergenceWatcherRegistry();
+
+export function createConvergenceWatcherRegistry(): ConvergenceWatcherRegistry {
+  return {
+    sessions: new Map(),
+    retiredSpendBySession: new Map(),
+  };
+}
+
+export function buildConvergenceSnapshot(events: LoopwatchEvent[], config: ConvergenceConfig = {}): ConvergenceSnapshot {
+  const nowMs = config.nowMs ?? Date.now();
+  const rateCapMs = config.minJudgeIntervalMs ?? DEFAULT_MIN_JUDGE_INTERVAL_MS;
+  const registry = config.registry ?? defaultRegistry;
+  const grouped = groupEvents(events);
+  const liveSessionIds = new Set(grouped.keys());
+  const sessions: SessionConvergenceState[] = [];
+  for (const [id, sessionEvents] of grouped) {
+    sessions.push(buildSessionConvergence(id, sessionEvents, nowMs, rateCapMs, registry, config));
+  }
+
+  retireAbsentSessions(registry, liveSessionIds);
+  sessions.sort((a, b) => Date.parse(b.lastEventAt) - Date.parse(a.lastEventAt));
+  return {
+    sessions,
+    spend: sumSpend([...registry.retiredSpendBySession.values(), ...sessions.map((session) => session.spend)]),
+    nextPollMs: NEXT_POLL_MS,
+  };
+}
+
+export function convergenceConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Pick<ConvergenceConfig, 'minJudgeIntervalMs' | 'idleAfterMs' | 'endedAfterMs' | 'burnTokenThreshold'> {
+  return {
+    minJudgeIntervalMs: positiveIntEnv(env.LOOPWATCH_CONVERGENCE_MIN_JUDGE_INTERVAL_MS),
+    idleAfterMs: positiveIntEnv(env.LOOPWATCH_CONVERGENCE_IDLE_AFTER_MS),
+    endedAfterMs: positiveIntEnv(env.LOOPWATCH_CONVERGENCE_ENDED_AFTER_MS),
+    burnTokenThreshold: positiveIntEnv(env.LOOPWATCH_CONVERGENCE_BURN_TOKENS),
+  };
+}
+
+function buildSessionConvergence(
+  id: string,
+  events: LoopwatchEvent[],
+  nowMs: number,
+  rateCapMs: number,
+  registry: ConvergenceWatcherRegistry,
+  config: ConvergenceConfig,
+): SessionConvergenceState {
+  const orderedEvents = [...events].sort(compareEvents);
+  const meaningfulEvents = orderedEvents.filter(isMeaningfulEvent);
+  const summary = summarizeSession(orderedEvents);
+  const liveness = livenessForEvent(orderedEvents.at(-1), nowMs, config);
+  const memory = activeOrRetiredMemory(registry, id);
+  const meaningfulCursor = meaningfulEvents.map(eventId).join('|');
+  const shouldJudge = liveness === 'active' && meaningfulCursor.length > 0 && meaningfulCursor !== memory.lastJudgedCursor && judgeRateCapAllows(memory, nowMs, rateCapMs);
+  if (shouldJudge) {
+    const judgement = judgeSession(summary, orderedEvents, config);
+    memory.spend.cheapCalls += 1;
+    memory.spend.estimatedTokens += CHEAP_TOKENS_PER_CALL;
+    memory.spend.estimatedCostUsd += CHEAP_COST_USD_PER_CALL;
+
+    if (judgement.requiresStrongModel) {
+      memory.spend.strongCalls += 1;
+      memory.spend.estimatedTokens += STRONG_TOKENS_PER_CALL;
+      memory.spend.estimatedCostUsd += STRONG_COST_USD_PER_CALL;
+      memory.lastTier = 'strong';
+    } else {
+      memory.lastTier = 'cheap';
+    }
+
+    memory.spend.totalCalls = memory.spend.cheapCalls + memory.spend.strongCalls;
+    memory.status = judgement.status;
+    memory.evidence = judgement.evidence;
+    memory.lastReason = judgement.reason;
+    memory.lastJudgedAtMs = nowMs;
+    memory.lastJudgedCursor = meaningfulCursor;
+  }
+
+  registry.sessions.set(id, memory);
+  const [source, sessionId] = splitSessionId(id, orderedEvents[0]);
+  return {
+    id,
+    source,
+    sessionId,
+    status: memory.status,
+    liveness,
+    summary: { ...summary, concerns: memory.evidence.map((evidence) => evidence.title).slice(0, MAX_SUMMARY_ITEMS) },
+    evidence: memory.evidence,
+    judge: {
+      provider: 'deterministic-fake-v1',
+      lastTier: memory.lastTier,
+      lastRunAt: memory.lastJudgedAtMs === undefined ? undefined : new Date(memory.lastJudgedAtMs).toISOString(),
+      nextEligibleAt: memory.lastJudgedAtMs === undefined ? undefined : new Date(memory.lastJudgedAtMs + rateCapMs).toISOString(),
+      lastReason: memory.lastReason,
+      rateCapMs,
+    },
+    spend: roundSpend(memory.spend),
+    eventCount: orderedEvents.length,
+    meaningfulEventCount: meaningfulEvents.length,
+    lastEventAt: orderedEvents.at(-1)?.timestamp ?? '',
+  };
+}
+
+function judgeSession(summary: RunningSummary, events: LoopwatchEvent[], config: ConvergenceConfig): { status: ConvergenceStatus; evidence: ConvergenceEvidenceRef[]; requiresStrongModel: boolean; reason: string } {
+  const evidence: ConvergenceEvidenceRef[] = [];
+  const failedValidations = events.filter((event) => isValidationEvent(event) && validationExitCode(event) !== undefined && validationExitCode(event) !== 0);
+  const successfulValidations = events.filter((event) => isValidationEvent(event) && validationExitCode(event) === 0);
+  const completionClaim = [...events].reverse().find((event) => event.kind === 'message' && event.actor.type === 'agent' && completionPattern.test(textFromEvent(event) ?? ''));
+  const driftEvent = events.find((event) => event.kind === 'message' && event.actor.type === 'agent' && driftPattern.test(textFromEvent(event) ?? ''));
+  const burnEvent = events.find((event) => tokenTotal(event) >= (config.burnTokenThreshold ?? DEFAULT_BURN_TOKEN_THRESHOLD));
+  const repeatedFailure = repeatedFailingCommand(failedValidations);
+
+  if (driftEvent) {
+    evidence.push(evidenceRef(driftEvent, 'intervention', 'drift', 'Possible drift from the inferred goal', compact(textFromEvent(driftEvent) ?? 'agent message suggests a different task', 180)));
+  }
+
+  if (completionClaim && successfulValidations.length === 0) {
+    evidence.push(
+      evidenceRef(
+        completionClaim,
+        'intervention',
+        'completion_without_evidence',
+        'Completion claim has no supporting validation evidence',
+        compact(textFromEvent(completionClaim) ?? 'agent claimed completion', 180),
+      ),
+    );
+  }
+
+  if (repeatedFailure) {
+    evidence.push(
+      evidenceRef(
+        repeatedFailure.event,
+        'intervention',
+        'churn',
+        'Repeated validation failure before convergence',
+        `${repeatedFailure.command} failed ${repeatedFailure.count} times`,
+      ),
+    );
+  } else if (failedValidations.length > 0) {
+    const failed = failedValidations.at(-1)!;
+    evidence.push(evidenceRef(failed, 'watch', 'weak_validation', 'Validation failed before the session converged', validationSummary(failed)));
+  }
+
+  if (burnEvent) {
+    evidence.push(evidenceRef(burnEvent, 'watch', 'burn', 'Token burn spike needs attention', `${tokenTotal(burnEvent)} observed tokens crossed the configured burn threshold`));
+  }
+
+  const status = maxStatus(evidence.map((item) => item.severity));
+  return {
+    status,
+    evidence,
+    requiresStrongModel: evidence.some((item) => item.severity !== 'calm'),
+    reason: evidence.length === 0 ? `cheap judge found no concerns for ${summary.goal}` : evidence.map((item) => item.signal).join(','),
+  };
+}
+
+function summarizeSession(events: LoopwatchEvent[]): RunningSummary {
+  const goal = compact(events.find((event) => event.kind === 'message' && event.actor.type === 'user' && !isToolResultMessage(event)) ? textFromEvent(events.find((event) => event.kind === 'message' && event.actor.type === 'user' && !isToolResultMessage(event))!) ?? '' : '', 220) || 'No opening request inferred yet.';
+  const done: string[] = [];
+  const validation: string[] = [];
+
+  for (const event of events) {
+    const text = textFromEvent(event);
+    const command = commandFromEvent(event);
+    if (event.kind === 'message' && event.actor.type === 'agent' && text) done.push(compact(text, 180));
+    if (event.kind === 'tool_call' && command) done.push(compact(command, 180));
+    if (isValidationEvent(event)) validation.push(validationSummary(event));
+  }
+
+  return {
+    goal,
+    done: done.slice(-MAX_SUMMARY_ITEMS),
+    validation: validation.slice(-MAX_SUMMARY_ITEMS),
+    concerns: [],
+  };
+}
+
+function groupEvents(events: LoopwatchEvent[]): Map<string, LoopwatchEvent[]> {
+  const grouped = new Map<string, LoopwatchEvent[]>();
+  for (const event of events) {
+    const key = sessionKey(event);
+    const group = grouped.get(key) ?? [];
+    group.push(event);
+    grouped.set(key, group);
+  }
+  return grouped;
+}
+
+function retireAbsentSessions(registry: ConvergenceWatcherRegistry, liveSessionIds: Set<string>): void {
+  for (const [id, memory] of registry.sessions) {
+    if (liveSessionIds.has(id)) continue;
+    registry.retiredSpendBySession.set(id, sumSpend([registry.retiredSpendBySession.get(id) ?? emptySpend(), memory.spend]));
+    registry.sessions.delete(id);
+  }
+}
+
+function activeOrRetiredMemory(registry: ConvergenceWatcherRegistry, id: string): ConvergenceWatcherMemory {
+  const active = registry.sessions.get(id);
+  if (active) return active;
+  const retiredSpend = registry.retiredSpendBySession.get(id);
+  registry.retiredSpendBySession.delete(id);
+  return newWatcherMemory(retiredSpend);
+}
+
+
+function emptySpend(): ConvergenceSpend {
+  return { cheapCalls: 0, strongCalls: 0, totalCalls: 0, estimatedTokens: 0, estimatedCostUsd: 0 };
+}
+
+function newWatcherMemory(spend: ConvergenceSpend = emptySpend()): ConvergenceWatcherMemory {
+  return {
+    lastJudgedCursor: '',
+    status: 'calm',
+    evidence: [],
+    spend: cloneSpend(spend),
+  };
+}
+
+function cloneSpend(spend: ConvergenceSpend): ConvergenceSpend {
+  return { ...spend };
+}
+
+function judgeRateCapAllows(memory: ConvergenceWatcherMemory, nowMs: number, rateCapMs: number): boolean {
+  return memory.lastJudgedAtMs === undefined || nowMs - memory.lastJudgedAtMs >= rateCapMs;
+}
+
+function isMeaningfulEvent(event: LoopwatchEvent): boolean {
+  if (event.kind === 'message') return true;
+  if (event.kind === 'usage') return true;
+  if (isValidationEvent(event)) return true;
+  const command = commandFromEvent(event);
+  if (command && /^\s*git\s+(commit|diff|status|push)\b/i.test(command)) return true;
+  const tool = toolNameFromEvent(event)?.toLowerCase();
+  return tool !== undefined && fileToolNames[tool] === true;
+}
+
+function isValidationEvent(event: LoopwatchEvent): boolean {
+  const command = commandFromEvent(event) ?? '';
+  if (validationCommandPattern.test(command)) return true;
+  const payload = payloadRecord(event);
+  if (recordValue(payload?.validation) !== undefined) return true;
+  return validationExitCode(event) !== undefined && contentBlocks(event).some((block) => block.type === 'tool_result');
+}
+
+function isToolResultMessage(event: LoopwatchEvent): boolean {
+  if (event.kind !== 'message') return false;
+  return contentBlocks(event).some((block) => block.type === 'tool_result');
+}
+
+function validationExitCode(event: LoopwatchEvent): number | undefined {
+  const payload = payloadRecord(event);
+  const direct = numberValue(payload?.exitCode) ?? numberValue(recordValue(payload?.tool)?.exit_code) ?? numberValue(recordValue(payload?.validation)?.exitCode);
+  if (direct !== undefined) return direct;
+  const resultBlock = contentBlocks(event).find((block) => block.type === 'tool_result');
+  if (typeof resultBlock?.is_error === 'boolean') return resultBlock.is_error ? 1 : 0;
+  return undefined;
+}
+
+function validationSummary(event: LoopwatchEvent): string {
+  const command = commandFromEvent(event) ?? 'validation result';
+  const exitCode = validationExitCode(event);
+  if (exitCode === undefined) return compact(command, 180);
+  return `${compact(command, 150)} exited ${exitCode}`;
+}
+
+function repeatedFailingCommand(failedValidations: LoopwatchEvent[]): { command: string; count: number; event: LoopwatchEvent } | undefined {
+  const counts = new Map<string, { count: number; event: LoopwatchEvent }>();
+  for (const event of failedValidations) {
+    const command = commandFromEvent(event) ?? 'validation result';
+    const current = counts.get(command) ?? { count: 0, event };
+    current.count += 1;
+    current.event = event;
+    counts.set(command, current);
+  }
+
+  for (const [command, value] of counts) {
+    if (value.count >= 2) return { command, ...value };
+  }
+  return undefined;
+}
+
+function evidenceRef(event: LoopwatchEvent, severity: ConvergenceStatus, signal: ConvergenceSignal, title: string, detail: string): ConvergenceEvidenceRef {
+  const recommendedAction = severity === 'intervention' ? recommendedActions[signal] : undefined;
+  return {
+    eventId: eventId(event),
+    timestamp: event.timestamp,
+    kind: event.kind,
+    severity,
+    signal,
+    title,
+    detail,
+    ...(recommendedAction ? { recommendedAction } : {}),
+  };
+}
+
+function eventId(event: LoopwatchEvent): string {
+  const payload = payloadRecord(event);
+  const record = event as Record<string, unknown>;
+  return stringValue(payload?.id) ?? stringValue(record.id) ?? stringValue(record.uuid) ?? `${event.source}:${event.sessionId}:${event.timestamp}:${event.kind}`;
+}
+
+function textFromEvent(event: LoopwatchEvent): string | undefined {
+  const payload = payloadRecord(event);
+  if (!payload) return undefined;
+  if (typeof payload.text === 'string') return payload.text;
+  if (typeof payload.content === 'string') return payload.content;
+  const message = recordValue(payload.message);
+  if (typeof message?.content === 'string') return message.content;
+  return textFromContent(message?.content ?? payload.content);
+}
+
+function textFromContent(content: unknown): string | undefined {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return undefined;
+
+  const parts: string[] = [];
+  for (const item of content) {
+    const block = recordValue(item);
+    if (!block) continue;
+    if (typeof block.text === 'string') parts.push(block.text);
+    else if (typeof block.content === 'string') parts.push(block.content);
+    else if (block.type === 'tool_use') {
+      const name = typeof block.name === 'string' ? block.name : 'tool';
+      const input = recordValue(block.input);
+      const command = typeof input?.command === 'string' ? input.command : undefined;
+      parts.push(command ? `${name}: ${command}` : `${name} call`);
+    }
+  }
+  return parts.filter(Boolean).join('\n') || undefined;
+}
+
+function commandFromEvent(event: LoopwatchEvent): string | undefined {
+  const payload = payloadRecord(event);
+  if (typeof payload?.command === 'string') return payload.command;
+  const tool = recordValue(payload?.tool);
+  const argumentsRecord = recordValue(tool?.arguments);
+  if (typeof argumentsRecord?.command === 'string') return argumentsRecord.command;
+  const validation = recordValue(payload?.validation);
+  if (typeof validation?.command === 'string') return validation.command;
+  const toolUse = contentBlocks(event).find((block) => block.type === 'tool_use');
+  const input = recordValue(toolUse?.input);
+  if (typeof input?.command === 'string') return input.command;
+  return undefined;
+}
+
+function toolNameFromEvent(event: LoopwatchEvent): string | undefined {
+  const payload = payloadRecord(event);
+  if (typeof payload?.toolName === 'string') return payload.toolName;
+  const tool = recordValue(payload?.tool);
+  if (typeof tool?.name === 'string') return tool.name;
+  const toolUse = contentBlocks(event).find((block) => block.type === 'tool_use');
+  if (typeof toolUse?.name === 'string') return toolUse.name;
+  return undefined;
+}
+
+function contentBlocks(event: LoopwatchEvent): Record<string, unknown>[] {
+  const payload = payloadRecord(event);
+  const message = recordValue(payload?.message);
+  const content = message?.content;
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((block) => {
+    const record = recordValue(block);
+    return record ? [record] : [];
+  });
+}
+
+function tokenTotal(event: LoopwatchEvent): number {
+  const payload = payloadRecord(event);
+  if (!payload) return 0;
+  const usage = recordValue(payload.usage) ?? payload;
+  return (
+    numberValue(usage.totalTokens) ??
+    numberValue(usage.total_tokens) ??
+    numberValue(usage.tokens) ??
+    (numberValue(usage.inputTokens) ?? numberValue(usage.input_tokens) ?? 0) + (numberValue(usage.outputTokens) ?? numberValue(usage.output_tokens) ?? 0)
+  );
+}
+
+function livenessForEvent(event: LoopwatchEvent | undefined, nowMs: number, config: ConvergenceConfig): ConvergenceLiveness {
+  if (!event) return 'ended';
+  const ageMs = nowMs - Date.parse(event.timestamp);
+  if (!Number.isFinite(ageMs) || ageMs < 0) return 'active';
+  if (ageMs >= (config.endedAfterMs ?? DEFAULT_ENDED_AFTER_MS)) return 'ended';
+  if (ageMs >= (config.idleAfterMs ?? DEFAULT_IDLE_AFTER_MS)) return 'idle';
+  return 'active';
+}
+
+function splitSessionId(id: string, firstEvent: LoopwatchEvent | undefined): [string, string] {
+  if (firstEvent) return [firstEvent.source, firstEvent.sessionId];
+  const index = id.indexOf(':');
+  return index === -1 ? ['unknown', id] : [id.slice(0, index), id.slice(index + 1)];
+}
+
+function maxStatus(statuses: ConvergenceStatus[]): ConvergenceStatus {
+  if (statuses.includes('intervention')) return 'intervention';
+  if (statuses.includes('watch')) return 'watch';
+  return 'calm';
+}
+
+function sumSpend(spends: ConvergenceSpend[]): ConvergenceSpend {
+  return roundSpend(
+    spends.reduce(
+      (total, spend) => ({
+        cheapCalls: total.cheapCalls + spend.cheapCalls,
+        strongCalls: total.strongCalls + spend.strongCalls,
+        totalCalls: total.totalCalls + spend.totalCalls,
+        estimatedTokens: total.estimatedTokens + spend.estimatedTokens,
+        estimatedCostUsd: total.estimatedCostUsd + spend.estimatedCostUsd,
+      }),
+      { cheapCalls: 0, strongCalls: 0, totalCalls: 0, estimatedTokens: 0, estimatedCostUsd: 0 },
+    ),
+  );
+}
+
+function roundSpend(spend: ConvergenceSpend): ConvergenceSpend {
+  return {
+    ...spend,
+    totalCalls: spend.cheapCalls + spend.strongCalls,
+    estimatedCostUsd: Number(spend.estimatedCostUsd.toFixed(6)),
+  };
+}
+
+function payloadRecord(event: LoopwatchEvent): Record<string, unknown> | undefined {
+  return recordValue(event.payload);
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function positiveIntEnv(value: string | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function compareEvents(a: LoopwatchEvent, b: LoopwatchEvent): number {
+  const byTime = Date.parse(a.timestamp) - Date.parse(b.timestamp);
+  if (byTime !== 0) return byTime;
+  return eventId(a).localeCompare(eventId(b));
+}
+
+function compact(value: string, max: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= max) return normalized;
+  return `${normalized.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
+}

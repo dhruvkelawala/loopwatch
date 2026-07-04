@@ -3,8 +3,9 @@ import { getRun, listRuns, type RunPointer } from '@flue/runtime';
 import { flue } from '@flue/runtime/routing';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
+import { buildConvergenceSnapshot, convergenceConfigFromEnv } from './convergence.js';
 import { LoopwatchEventSchema, sessionKey, type LoopwatchEvent } from './events.js';
-import { LOOPWATCH_EVENT_WORKFLOWS, LoopwatchRunsQuerySchema } from './schemas/loopwatch.js';
+import { LOOPWATCH_EVENT_WORKFLOWS, LoopwatchConvergenceQuerySchema, LoopwatchRunsQuerySchema } from './schemas/loopwatch.js';
 
 const app = new Hono();
 
@@ -65,6 +66,22 @@ app.get('/loopwatch/runs', async (c) => {
   const runs = await buildLoopwatchRunIndex(parsed.data.limit, parsed.data.scanLimit);
 
   return c.json({ ok: true, runs, nextPollMs: 1000 });
+});
+
+app.get('/loopwatch/convergence', async (c) => {
+  const parsed = LoopwatchConvergenceQuerySchema.safeParse({
+    limit: c.req.query('limit') ?? undefined,
+    scanLimit: c.req.query('scanLimit') ?? undefined,
+  });
+  if (!parsed.success) {
+    return c.json({ ok: false, error: 'invalid_request', issues: parsed.error.issues }, 400);
+  }
+
+  const runs = await buildLoopwatchRunIndex(parsed.data.limit, parsed.data.scanLimit);
+  const eventGroups = await Promise.all(runs.map((run) => recordedEventsForRun(run)));
+  const snapshot = buildConvergenceSnapshot(eventGroups.flat(), convergenceConfigFromEnv());
+
+  return c.json({ ok: true, ...snapshot });
 });
 
 app.route('/', flue());

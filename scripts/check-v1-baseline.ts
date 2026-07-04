@@ -58,6 +58,17 @@ const baselineChecks: VerificationCheck[] = [
       'active run appends stream into the same session projection',
     ],
   },
+  {
+    name: 'Convergence watcher contract',
+    command: ['pnpm', 'convergence:check'],
+    issues: ['#8'],
+    adrs: ['ADR-0002', 'ADR-0010', 'ADR-0011'],
+    proves: [
+      'active sessions infer and maintain a goal/done/validation/concerns summary',
+      'event-driven judge cadence is rate-capped and gated by liveness',
+      'hard convergence signals escalate cheap judge checks to the strong judge with spend accounted',
+    ],
+  },
 ];
 
 const results = await runVerificationChecks(baselineChecks);

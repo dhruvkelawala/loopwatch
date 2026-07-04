@@ -44,3 +44,63 @@ export const LoopwatchRunsResponseSchema = z.object({
   runs: z.array(LoopwatchRunPointerSchema),
   nextPollMs: z.number().int().positive().optional(),
 });
+
+export const ConvergenceStatusSchema = z.enum(['calm', 'watch', 'intervention']);
+
+export const ConvergenceEvidenceRefSchema = z.object({
+  eventId: z.string().min(1),
+  timestamp: z.string(),
+  kind: z.string().min(1),
+  severity: ConvergenceStatusSchema,
+  signal: z.enum(['drift', 'burn', 'weak_validation', 'churn', 'completion_without_evidence']),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  recommendedAction: z.string().min(1).optional(),
+});
+
+export const RunningSummarySchema = z.object({
+  goal: z.string().min(1),
+  done: z.array(z.string()),
+  validation: z.array(z.string()),
+  concerns: z.array(z.string()),
+});
+
+export const ConvergenceSpendSchema = z.object({
+  cheapCalls: z.number().int().nonnegative(),
+  strongCalls: z.number().int().nonnegative(),
+  totalCalls: z.number().int().nonnegative(),
+  estimatedTokens: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().nonnegative(),
+});
+export type ConvergenceSpend = z.infer<typeof ConvergenceSpendSchema>;
+
+export const SessionConvergenceSchema = z.object({
+  id: z.string().min(1),
+  source: z.string().min(1),
+  sessionId: z.string().min(1),
+  status: ConvergenceStatusSchema,
+  liveness: z.enum(['active', 'idle', 'ended']),
+  summary: RunningSummarySchema,
+  evidence: z.array(ConvergenceEvidenceRefSchema),
+  judge: z.object({
+    provider: z.literal('deterministic-fake-v1'),
+    lastTier: z.enum(['cheap', 'strong']).optional(),
+    lastRunAt: z.string().optional(),
+    nextEligibleAt: z.string().optional(),
+    lastReason: z.string().optional(),
+    rateCapMs: z.number().int().positive(),
+  }),
+  spend: ConvergenceSpendSchema,
+  eventCount: z.number().int().nonnegative(),
+  meaningfulEventCount: z.number().int().nonnegative(),
+  lastEventAt: z.string(),
+});
+export type SessionConvergence = z.infer<typeof SessionConvergenceSchema>;
+
+export const LoopwatchConvergenceResponseSchema = z.object({
+  ok: z.literal(true),
+  sessions: z.array(SessionConvergenceSchema),
+  spend: ConvergenceSpendSchema,
+  nextPollMs: z.number().int().positive(),
+});
+export type LoopwatchConvergenceResponse = z.infer<typeof LoopwatchConvergenceResponseSchema>;

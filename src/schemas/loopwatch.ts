@@ -9,3 +9,5 @@ export const LoopwatchRunsQuerySchema = z.object({
   // even after the flat recent window has rolled forward.
   scanLimit: z.coerce.number().int().min(1).max(10_000).default(2_400),
 });
+
+export const LoopwatchConvergenceQuerySchema = LoopwatchRunsQuerySchema;

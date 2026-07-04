@@ -18,6 +18,7 @@
     "ingest:check": "tsx scripts/check-claude-ingest.ts",
     "security:check": "tsx scripts/check-engine-security.ts",
     "cockpit:check": "tsx scripts/check-cockpit-live.ts",
+    "convergence:check": "tsx scripts/check-convergence-watcher.ts",
     "persistence:check": "tsx scripts/check-flue-persistence.ts",
     "v1:baseline": "tsx scripts/check-v1-baseline.ts",
     "v1:harness": "pnpm harness:fixtures && pnpm harness:source-smoke && pnpm harness:eval:live",

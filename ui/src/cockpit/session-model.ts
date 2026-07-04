@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { buildSessionViews, type LoopwatchEvent, type SessionView } from '../loopwatch-events';
+import { buildSessionViews, type LoopwatchEvent, type SessionConvergence, type SessionView, type TimelineItem, type TimelineLane } from '../loopwatch-events';
 
 export type SessionGroup = { repo: string; sessions: SessionView[] };
 
-export function useCockpitSessionModel(events: LoopwatchEvent[]) {
+export function useCockpitSessionModel(events: LoopwatchEvent[], convergenceSessions: SessionConvergence[] = []) {
   const nowMs = useNow(15_000);
-  const sessions = useMemo(() => buildSessionViews(events, nowMs), [events, nowMs]);
+  const convergenceBySession = useMemo(() => new Map(convergenceSessions.map((session) => [session.id, session])), [convergenceSessions]);
+  const sessions = useMemo(() => applyConvergence(buildSessionViews(events, nowMs), convergenceBySession), [events, convergenceBySession, nowMs]);
   const [selectedId, setSelectedId] = useState('');
 
   useEffect(() => {
@@ -45,4 +46,48 @@ function groupSessionsByRepo(sessions: SessionView[]): SessionGroup[] {
   return [...groups.entries()]
     .map(([repo, group]) => ({ repo, sessions: group }))
     .sort((a, b) => a.repo.localeCompare(b.repo));
+}
+
+function applyConvergence(sessions: SessionView[], convergenceBySession: Map<string, SessionConvergence>): SessionView[] {
+  return sessions.map((session) => {
+    const convergence = convergenceBySession.get(session.id);
+    if (!convergence) return session;
+    return {
+      ...session,
+      goal: convergence.summary.goal || session.goal,
+      phase: convergence.status === 'calm' ? session.phase : convergence.evidence[0]?.signal.replaceAll('_', ' ') ?? session.phase,
+      severity: convergence.status,
+      convergence,
+      lanes: withConvergenceLane(session.lanes, convergence),
+    };
+  });
+}
+
+function withConvergenceLane(lanes: TimelineLane[], convergence: SessionConvergence): TimelineLane[] {
+  return lanes.map((lane) => {
+    if (lane.lane !== 'convergence') return lane;
+    return { lane: lane.lane, items: convergenceItems(convergence) };
+  });
+}
+
+function convergenceItems(convergence: SessionConvergence): TimelineItem[] {
+  if (convergence.evidence.length === 0) {
+    return [
+      {
+        id: `${convergence.id}:convergence:calm`,
+        at: convergence.judge.lastRunAt ?? convergence.lastEventAt,
+        label: 'Convergence calm',
+        tone: 'calm',
+        detail: `Cheap judge found no concerns · ${convergence.spend.totalCalls} calls`,
+      },
+    ];
+  }
+
+  return convergence.evidence.map((evidence) => ({
+    id: `${convergence.id}:convergence:${evidence.eventId}:${evidence.signal}`,
+    at: evidence.timestamp,
+    label: evidence.title,
+    tone: evidence.severity,
+    detail: evidence.detail,
+  }));
 }

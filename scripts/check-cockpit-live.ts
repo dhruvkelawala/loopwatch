@@ -31,6 +31,18 @@ interface LoopwatchRunsResponse {
   runs: Array<{ runId: string; workflowName: string; status: 'active' | 'completed' | 'errored'; startedAt: string }>;
 }
 
+interface LoopwatchConvergenceResponse {
+  ok: true;
+  sessions: Array<{
+    id: string;
+    status: 'calm' | 'watch' | 'intervention';
+    summary: { goal: string; validation: string[]; concerns: string[] };
+    spend: { cheapCalls: number; strongCalls: number; totalCalls: number; estimatedTokens: number; estimatedCostUsd: number };
+  }>;
+  spend: { cheapCalls: number; strongCalls: number; totalCalls: number; estimatedTokens: number; estimatedCostUsd: number };
+  nextPollMs: number;
+}
+
 async function waitForServer() {
   const deadline = Date.now() + 10_000;
   let lastError: unknown;
@@ -105,6 +117,14 @@ async function fetchRunIndex({ limit = 20, scanLimit }: { limit?: number; scanLi
   const response = await fetch(`${baseUrl}/loopwatch/runs?${params}`);
   if (!response.ok) throw new Error(`GET /loopwatch/runs failed: ${response.status} ${await response.text()}`);
   return (await response.json()) as LoopwatchRunsResponse;
+}
+
+async function fetchConvergence({ limit = 20, scanLimit }: { limit?: number; scanLimit?: number } = {}): Promise<LoopwatchConvergenceResponse> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (scanLimit !== undefined) params.set('scanLimit', String(scanLimit));
+  const response = await fetch(`${baseUrl}/loopwatch/convergence?${params}`);
+  if (!response.ok) throw new Error(`GET /loopwatch/convergence failed: ${response.status} ${await response.text()}`);
+  return (await response.json()) as LoopwatchConvergenceResponse;
 }
 
 async function assertDurableStreamHeadersExposed(runId: string): Promise<void> {
@@ -206,10 +226,18 @@ async function main() {
     assert.ok(session.lanes.find((lane) => lane.lane === 'request')?.items.length, 'request lane back-fills history');
     assert.ok(session.lanes.find((lane) => lane.lane === 'validation')?.items.length, 'validation lane classifies pnpm test');
 
+
+    const firstConvergence = await fetchConvergence();
+    assert.equal(firstConvergence.sessions.length, 1, 'convergence endpoint watches the live session');
+    assert.equal(firstConvergence.sessions[0].id, `claude:${SID}`, 'convergence session identity matches the source session');
+    assert.equal(firstConvergence.sessions[0].status, 'calm', 'initial watcher status is calm before evidence concerns');
+    assert.match(firstConvergence.sessions[0].summary.goal, /Slice 5/, 'convergence summary infers the opening request');
+    assert.equal(firstConvergence.spend.totalCalls, 1, 'first convergence probe spends one cheap judge call');
+
     await appendFile(
       transcript,
       jsonl([
-        rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_check', content: 'All checks passed.' }] } }),
+        rec({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_check', content: 'All checks passed.', is_error: false }] } }),
         rec({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Done — the Cockpit is live.' }] } }),
       ]),
     );
@@ -224,6 +252,11 @@ async function main() {
     const views = buildSessionViews(replayed, Date.now());
     assert.equal(views[0].eventCount, 4, 'opening mid-session replays old events plus live append');
     assert.equal(views[0].phase, 'agent response', 'latest append updates phase without restart');
+
+    const convergence = await fetchConvergence({ limit: 1, scanLimit: 20 });
+    assert.equal(convergence.sessions[0].status, 'calm', 'successful validation keeps the watcher calm');
+    assert.ok(convergence.sessions[0].summary.validation.includes('validation result exited 0'), 'convergence summary retains tool-result validation evidence');
+    assert.equal(convergence.spend.totalCalls, firstConvergence.spend.totalCalls, 'rate cap prevents a second judge call during the live append');
 
     console.log('\nCockpit live check passed.');
     console.log(`  transcript: ${transcript}`);

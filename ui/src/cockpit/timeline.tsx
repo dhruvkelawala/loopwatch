@@ -1,7 +1,20 @@
 import type { Severity, SessionView, TimelineItem, TimelineLane } from '../loopwatch-events';
+import { InterventionCard, timelineItemElementId, type InterventionCardModel } from './intervention-card';
 import { chipToneClass, ConvergenceDial, formatClock, LivenessPill, SeverityBadge, valueToneClass } from './visual';
 
-export function Timeline({ session }: { session: SessionView | undefined }) {
+export function Timeline({
+  session,
+  interventionCard,
+  focusedTimelineItemId,
+  onInspectIntervention,
+  onDismissIntervention,
+}: {
+  session: SessionView | undefined;
+  interventionCard?: InterventionCardModel;
+  focusedTimelineItemId?: string;
+  onInspectIntervention: (card: InterventionCardModel) => void;
+  onDismissIntervention: (id: string) => void;
+}) {
   if (!session) return <EmptyTimeline />;
 
   return (
@@ -31,11 +44,13 @@ export function Timeline({ session }: { session: SessionView | undefined }) {
         <MetricCard label="convergence" value="—" detail="judge lands in Slice 6" compact />
       </div>
 
+      {interventionCard ? <InterventionCard card={interventionCard} onInspect={onInspectIntervention} onDismiss={onDismissIntervention} /> : null}
+
       <div className="px-5 pb-12 pt-3">
         <div className="mb-2 font-mono text-[9px] font-medium uppercase tracking-[.14em] text-watch-ink-3">Timeline lanes</div>
         <div className="overflow-hidden rounded-[11px] border border-watch-line">
           {session.lanes.map((lane) => (
-            <LaneRow lane={lane} key={lane.lane} />
+            <LaneRow focusedTimelineItemId={focusedTimelineItemId} lane={lane} key={lane.lane} />
           ))}
         </div>
       </div>
@@ -68,20 +83,21 @@ function MetricCard({ label, value, detail, tone, compact = false }: { label: st
   );
 }
 
-function LaneRow({ lane }: { lane: TimelineLane }) {
+function LaneRow({ lane, focusedTimelineItemId }: { lane: TimelineLane; focusedTimelineItemId?: string }) {
   return (
     <div className="grid min-h-[42px] grid-cols-[118px_1fr] border-b border-watch-line last:border-b-0 hover:bg-watch-hover-faint">
       <div className="border-r border-watch-line px-3.5 py-2.5 font-mono text-[10px] uppercase tracking-[.06em] text-watch-ink-3">{lane.lane}</div>
       <div className="grid gap-2 px-5 py-2.5 font-mono text-[12px] leading-[1.7] text-watch-ink">
-        {lane.items.length === 0 ? <LaneEmpty lane={lane.lane} /> : lane.items.map((item) => <TimelineChip item={item} key={item.id} />)}
+        {lane.items.length === 0 ? <LaneEmpty lane={lane.lane} /> : lane.items.map((item) => <TimelineChip focused={item.id === focusedTimelineItemId} item={item} key={item.id} />)}
       </div>
     </div>
   );
 }
 
-function TimelineChip({ item }: { item: TimelineItem }) {
+function TimelineChip({ item, focused }: { item: TimelineItem; focused?: boolean }) {
+  const focusClass = focused ? 'rounded-[7px] border border-severity-intervention/35 bg-evidence-intervention px-2 py-1 shadow-watch-card' : '';
   return (
-    <div>
+    <div className={focusClass} id={timelineItemElementId(item.id)}>
       <span className="mr-2 text-[10px] text-watch-ink-3">{formatClock(item.at)}</span>
       <span className={`mr-1 inline-block rounded-[5px] px-1.5 py-0.5 text-[10.5px] font-medium ${chipToneClass[item.tone]}`}>{item.label}</span>
       <span className="text-watch-ink-2">{item.detail}</span>

@@ -1,7 +1,7 @@
 import type { FlueEvent } from '@flue/sdk';
-import { LoopwatchEventSchema, type LoopwatchEvent } from './schemas/loopwatch.js';
+import { LoopwatchEventSchema, type LoopwatchEvent, type SessionConvergence } from './schemas/loopwatch.js';
 
-export type { LoopwatchEvent } from './schemas/loopwatch.js';
+export type { LoopwatchEvent, SessionConvergence } from './schemas/loopwatch.js';
 
 export type Severity = 'intervention' | 'watch' | 'calm';
 export type Liveness = 'active' | 'idle' | 'ended';
@@ -37,6 +37,7 @@ export interface SessionView {
   lastEvent: string;
   events: LoopwatchEvent[];
   lanes: TimelineLane[];
+  convergence?: SessionConvergence;
 }
 
 const RECORDED_EVENT_MESSAGE = 'loopwatch.event.recorded';

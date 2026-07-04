@@ -1,16 +1,21 @@
 import type { ReactNode } from 'react';
 import type { Severity, SessionView } from '../loopwatch-events';
-import { healthEndpoint, loopwatchRunsEndpoint } from './endpoints';
-import type { RunBridgeState } from './live-replay';
+import { healthEndpoint, loopwatchConvergenceEndpoint, loopwatchRunsEndpoint } from './endpoints';
+import type { ConvergenceBridgeState, RunBridgeState } from './live-replay';
+import { interventionEvidenceKey } from './intervention-card';
 
 export function EvidenceInspector({
   session,
   flueBaseUrl,
   bridgeState,
+  convergenceState,
+  focusedEvidenceKey,
 }: {
   session: SessionView | undefined;
   flueBaseUrl: string;
   bridgeState: RunBridgeState;
+  convergenceState: ConvergenceBridgeState;
+  focusedEvidenceKey?: string;
 }) {
   return (
     <aside className="min-h-0 overflow-auto border-l border-watch-line bg-gradient-to-b from-watch-panel to-watch-panel-2 max-[980px]:hidden">
@@ -30,9 +35,9 @@ export function EvidenceInspector({
         <EvidenceDetails rows={replayBridgeRows(flueBaseUrl, bridgeState)} />
       </EvidenceCard>
 
-      <div className="mx-3 my-3 border-l-2 border-watch-line-2 py-0.5 pl-3 text-[11.5px] leading-[1.65] text-watch-ink-2">
-        <b className="font-semibold text-watch-ink">Slice 5 scope:</b> real Claude adapter events now drive the rail and timeline. The convergence lane remains inert until the watcher lands.
-      </div>
+      <EvidenceCard tone={session?.severity} title="Convergence watcher" number="03">
+        <EvidenceDetails rows={convergenceRows(session, convergenceState, flueBaseUrl, focusedEvidenceKey)} />
+      </EvidenceCard>
 
       <div className="mx-3 my-3 border-l-2 border-severity-watch py-0.5 pl-3 text-[11.5px] leading-[1.65] text-watch-ink-2">
         Health probe: <code className="rounded bg-watch-code px-1.5 py-0.5 font-mono text-[10.5px] text-watch-accent">{healthEndpoint(flueBaseUrl)}</code>
@@ -62,6 +67,29 @@ function replayBridgeRows(flueBaseUrl: string, bridgeState: RunBridgeState): Evi
     { label: 'Replay', detail: `${bridgeState.eventCount} normalized events from ${bridgeState.runCount} Flue runs` },
     { label: 'Discovery', detail: loopwatchRunsEndpoint(flueBaseUrl) },
     { label: 'Cadence', detail: 'run index polls every 1s; completed runs replay once' },
+  ];
+}
+
+function convergenceRows(session: SessionView | undefined, convergenceState: ConvergenceBridgeState, flueBaseUrl: string, focusedEvidenceKey?: string): EvidenceDetail[] {
+  const convergence = session?.convergence;
+  if (!convergence) {
+    return [
+      { label: 'Watcher', detail: convergenceState.detail },
+      { label: 'Discovery', detail: loopwatchConvergenceEndpoint(flueBaseUrl) },
+      { label: 'Spend', detail: `cheap ${convergenceState.spend.cheapCalls} · strong ${convergenceState.spend.strongCalls} · $${convergenceState.spend.estimatedCostUsd.toFixed(6)}` },
+    ];
+  }
+
+  const selectedEvidence = convergence.evidence.find((item) => interventionEvidenceKey(session.id, item) === focusedEvidenceKey) ?? convergence.evidence[0];
+  return [
+    { label: 'status', detail: convergence.status },
+    { label: 'goal', detail: convergence.summary.goal },
+    { label: 'evidence', detail: selectedEvidence?.title ?? 'No convergence concerns' },
+    { label: 'signal', detail: selectedEvidence?.signal.replaceAll('_', ' ') ?? 'none' },
+    { label: 'receipt', detail: selectedEvidence ? selectedEvidence.detail : 'No evidence receipt selected' },
+    { label: 'event id', detail: selectedEvidence?.eventId ?? 'none' },
+    { label: 'judge', detail: `${convergence.judge.lastTier ?? 'not run'} · cap ${Math.round(convergence.judge.rateCapMs / 1000)}s` },
+    { label: 'spend', detail: `cheap ${convergence.spend.cheapCalls} · strong ${convergence.spend.strongCalls} · ${convergence.spend.estimatedTokens} tokens · $${convergence.spend.estimatedCostUsd.toFixed(6)}` },
   ];
 }
 
