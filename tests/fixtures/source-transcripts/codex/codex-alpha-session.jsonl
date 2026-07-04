@@ -1,0 +1,3 @@
+{"source":"codex","type":"turn","id":"codex-fixture-0001","session_id":"codex-alpha-session","timestamp":"2026-07-04T10:01:00.000Z","role":"user","items":[{"type":"input_text","text":"Implement the deterministic fixture loader."}],"cwd":"/tmp/loopwatch-fixture"}
+{"source":"codex","type":"tool_call","id":"codex-fixture-0002","session_id":"codex-alpha-session","timestamp":"2026-07-04T10:01:03.000Z","role":"assistant","tool":{"name":"shell","arguments":{"command":"pnpm tsc"}},"cwd":"/tmp/loopwatch-fixture"}
+{"source":"codex","type":"tool_result","id":"codex-fixture-0003","session_id":"codex-alpha-session","timestamp":"2026-07-04T10:01:09.000Z","role":"tool","tool":{"name":"shell","exit_code":0,"output":"TypeScript passed."},"cwd":"/tmp/loopwatch-fixture"}

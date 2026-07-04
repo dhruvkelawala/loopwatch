@@ -19,6 +19,12 @@
     "cockpit:check": "tsx scripts/check-cockpit-live.ts",
     "persistence:check": "tsx scripts/check-flue-persistence.ts",
     "v1:baseline": "tsx scripts/check-v1-baseline.ts",
+    "v1:harness": "pnpm harness:fixtures && pnpm harness:source-smoke && pnpm harness:eval:live",
+    "harness:fixtures": "tsx scripts/check-harness-foundation.ts",
+    "harness:source-smoke": "tsx scripts/check-source-smoke.ts",
+    "harness:eval:live": "tsx scripts/check-live-eval.ts",
+    "e2e:cockpit": "tsx scripts/run-cockpit-e2e.ts",
+    "dev:data:reset": "tsx scripts/reset-dev-data.ts",
     "test": "tsx scripts/check-normalized-event.ts && tsx scripts/check-claude-adapter.ts",
     "tsc": "tsc --noEmit"
   },
@@ -38,6 +44,7 @@
   },
   "devDependencies": {
     "@flue/cli": "1.0.0-beta.1",
+    "@playwright/test": "^1.61.1",
     "@tauri-apps/cli": "2.11.3",
     "@types/node": "^25.0.0",
     "@types/react": "^19.2.17",

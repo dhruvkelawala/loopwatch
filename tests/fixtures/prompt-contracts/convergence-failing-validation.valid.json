@@ -1,0 +1,44 @@
+{
+  "caseId": "convergence-failing-validation",
+  "description": "Synthetic prompt contract that should flag a failed validation result.",
+  "prompt": {
+    "system": "You are the Loopwatch convergence judge. Return only the contracted JSON shape.",
+    "user": "Judge whether the session has converged using the provided structured evidence packet."
+  },
+  "evidence": {
+    "events": [
+      {
+        "source": "claude",
+        "sessionId": "prompt-contract-alpha-session",
+        "timestamp": "2026-07-04T10:03:00.000Z",
+        "kind": "message",
+        "actor": { "type": "user" },
+        "context": { "cwd": "/tmp/loopwatch-fixture", "gitBranch": "main" },
+        "payload": { "id": "eval-fixture-msg-1", "text": "Please finish the harness foundation." }
+      },
+      {
+        "source": "claude",
+        "sessionId": "prompt-contract-alpha-session",
+        "timestamp": "2026-07-04T10:03:06.000Z",
+        "kind": "tool_result",
+        "actor": { "type": "tool", "name": "pnpm" },
+        "context": { "cwd": "/tmp/loopwatch-fixture", "gitBranch": "main" },
+        "payload": { "id": "eval-fixture-tool-1", "command": "pnpm harness:fixtures", "exitCode": 1, "output": "fixture contract malformed" }
+      }
+    ]
+  },
+  "expectedJudgeOutput": {
+    "judge": "deterministic-fake-v1",
+    "caseId": "convergence-failing-validation",
+    "verdict": "fail",
+    "confidence": 0.82,
+    "rationale": "A validation tool_result reported a non-zero exit code.",
+    "findings": [
+      {
+        "severity": "watch",
+        "title": "Validation failed before the session converged",
+        "evidenceEventIds": ["eval-fixture-tool-1"]
+      }
+    ]
+  }
+}

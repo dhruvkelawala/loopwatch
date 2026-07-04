@@ -1,0 +1,27 @@
+{
+  "caseId": "malformed-missing-verdict",
+  "description": "Intentionally invalid fixture: expectedJudgeOutput omits the required verdict.",
+  "prompt": {
+    "system": "You are the Loopwatch convergence judge. Return only the contracted JSON shape.",
+    "user": "This fixture should never pass contract validation."
+  },
+  "evidence": {
+    "events": [
+      {
+        "source": "claude",
+        "sessionId": "prompt-contract-malformed-session",
+        "timestamp": "2026-07-04T10:04:00.000Z",
+        "kind": "message",
+        "actor": { "type": "user" },
+        "payload": { "id": "malformed-msg-1", "text": "Malformed expected output fixture." }
+      }
+    ]
+  },
+  "expectedJudgeOutput": {
+    "judge": "deterministic-fake-v1",
+    "caseId": "malformed-missing-verdict",
+    "confidence": 0.5,
+    "rationale": "This omits verdict and must be rejected.",
+    "findings": []
+  }
+}
