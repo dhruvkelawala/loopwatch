@@ -74,6 +74,20 @@ export const ConvergenceSpendSchema = z.object({
 });
 export type ConvergenceSpend = z.infer<typeof ConvergenceSpendSchema>;
 
+export const LoopAnchorSchema = z.object({
+  loopId: z.string().min(1),
+  title: z.string().min(1),
+  source: z.literal('opening_prompt'),
+  confidence: z.number().min(0).max(1),
+  threshold: z.number().min(0).max(1).optional(),
+  reason: z.string().min(1),
+  stopCondition: z.object({
+    evidence: z.string().min(1),
+    observable: z.boolean(),
+  }),
+});
+export type LoopAnchor = z.infer<typeof LoopAnchorSchema>;
+
 export const GitEvidenceSnapshotSchema = z.object({
   repoRoot: z.string().min(1),
   repo: z.string().min(1),
@@ -122,6 +136,7 @@ export const SessionConvergenceSchema = z.object({
   meaningfulEventCount: z.number().int().nonnegative(),
   lastEventAt: z.string(),
   git: GitEvidenceSnapshotSchema.optional(),
+  loopAnchor: LoopAnchorSchema.optional(),
 });
 export type SessionConvergence = z.infer<typeof SessionConvergenceSchema>;
 

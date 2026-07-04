@@ -1,4 +1,5 @@
 import { gitSnapshotFromEvent, type GitEvidenceSnapshot } from './git-watch.js';
+import { DEFAULT_LOOP_ANCHOR_SCORE_THRESHOLD, STARTER_LOOPS, detectLoop, type Loop } from './loops.js';
 import { sessionKey, type LoopwatchEvent } from './events.js';
 
 export type ConvergenceStatus = 'calm' | 'watch' | 'intervention';
@@ -22,6 +23,19 @@ export interface RunningSummary {
   done: string[];
   validation: string[];
   concerns: string[];
+}
+
+export interface LoopAnchor {
+  loopId: string;
+  title: string;
+  source: 'opening_prompt';
+  confidence: number;
+  threshold?: number;
+  reason: string;
+  stopCondition: {
+    evidence: string;
+    observable: boolean;
+  };
 }
 
 export interface ConvergenceSpend {
@@ -55,6 +69,7 @@ export interface SessionConvergenceState {
   meaningfulEventCount: number;
   lastEventAt: string;
   git?: GitEvidenceSnapshot;
+  loopAnchor?: LoopAnchor;
 }
 
 export interface ConvergenceSnapshot {
@@ -70,6 +85,12 @@ export interface ConvergenceConfig {
   endedAfterMs?: number;
   burnTokenThreshold?: number;
   registry?: ConvergenceWatcherRegistry;
+  loops?: Loop[];
+  loopAnchorScoreThreshold?: number;
+  loopAnchoring?: {
+    loops?: Loop[];
+    confidenceThreshold?: number;
+  };
 }
 
 interface ConvergenceWatcherMemory {
@@ -106,7 +127,7 @@ const fileToolNames: Record<string, true> = { edit: true, write: true, multiedit
 const recommendedActions: Record<ConvergenceSignal, string> = {
   drift: 'Restate the active goal, or explicitly pivot before continuing.',
   burn: 'Pause the run, summarize the current state, and choose a smaller next step before spending more judge calls.',
-  weak_validation: 'Inspect the failing validation, fix the failure, and rerun the exact check before claiming convergence.',
+  weak_validation: 'Produce the missing or failing validation evidence, then rerun or cite the exact check before claiming convergence.',
   churn: 'Stop retrying the same failing path; explain the repeated failure and pick a different repair strategy.',
   completion_without_evidence: 'Run or cite the expected verification evidence before closing the session.',
 };
@@ -160,12 +181,13 @@ function buildSessionConvergence(
   const orderedEvents = [...events].sort(compareEvents);
   const meaningfulEvents = orderedEvents.filter(isMeaningfulEvent);
   const summary = summarizeSession(orderedEvents);
+  const loop = detectSessionLoop(orderedEvents, config);
   const liveness = livenessForEvent(orderedEvents.at(-1), nowMs, config);
   const memory = activeOrRetiredMemory(registry, id);
   const meaningfulCursor = meaningfulEvents.map(eventId).join('|');
   const shouldJudge = liveness === 'active' && meaningfulCursor.length > 0 && meaningfulCursor !== memory.lastJudgedCursor && judgeRateCapAllows(memory, nowMs, rateCapMs);
   if (shouldJudge) {
-    const judgement = judgeSession(summary, orderedEvents, config);
+    const judgement = judgeSession(summary, orderedEvents, config, loop);
     memory.spend.cheapCalls += 1;
     memory.spend.estimatedTokens += CHEAP_TOKENS_PER_CALL;
     memory.spend.estimatedCostUsd += CHEAP_COST_USD_PER_CALL;
@@ -211,13 +233,15 @@ function buildSessionConvergence(
     meaningfulEventCount: meaningfulEvents.length,
     lastEventAt: orderedEvents.at(-1)?.timestamp ?? '',
     ...(git ? { git } : {}),
+    ...(loop ? { loopAnchor: loop } : {}),
   };
 }
 
-function judgeSession(summary: RunningSummary, events: LoopwatchEvent[], config: ConvergenceConfig): { status: ConvergenceStatus; evidence: ConvergenceEvidenceRef[]; requiresStrongModel: boolean; reason: string } {
+function judgeSession(summary: RunningSummary, events: LoopwatchEvent[], config: ConvergenceConfig, loop?: LoopAnchor): { status: ConvergenceStatus; evidence: ConvergenceEvidenceRef[]; requiresStrongModel: boolean; reason: string } {
   const evidence: ConvergenceEvidenceRef[] = [];
   const failedValidations = events.filter((event) => isValidationEvent(event) && validationExitCode(event) !== undefined && validationExitCode(event) !== 0);
   const successfulValidations = events.filter((event) => isValidationEvent(event) && validationExitCode(event) === 0);
+  const requiredValidationEvidenceFound = requiredValidationEvidenceObserved(successfulValidations, loop);
   const completionClaim = [...events].reverse().find((event) => event.kind === 'message' && event.actor.type === 'agent' && completionPattern.test(textFromEvent(event) ?? ''));
   const driftEvent = events.find((event) => event.kind === 'message' && event.actor.type === 'agent' && driftPattern.test(textFromEvent(event) ?? ''));
   const burnEvent = events.find((event) => tokenTotal(event) >= (config.burnTokenThreshold ?? DEFAULT_BURN_TOKEN_THRESHOLD));
@@ -228,15 +252,19 @@ function judgeSession(summary: RunningSummary, events: LoopwatchEvent[], config:
     evidence.push(evidenceRef(driftEvent, 'intervention', 'drift', 'Possible drift from the inferred goal', compact(textFromEvent(driftEvent) ?? 'agent message suggests a different task', 180)));
   }
 
-  if (completionClaim && successfulValidations.length === 0) {
+  if (completionClaim && !requiredValidationEvidenceFound && loop?.stopCondition.observable !== false) {
+    const missingLoopEvidence = loop !== undefined;
+    const signal: ConvergenceSignal = missingLoopEvidence ? 'weak_validation' : 'completion_without_evidence';
+    const title = missingLoopEvidence ? 'Loop stop-condition evidence is missing' : 'Completion claim has no supporting validation evidence';
+    const detail = missingLoopEvidence ? `Expected evidence for ${loop.title}: ${loop.stopCondition.evidence}` : compact(textFromEvent(completionClaim) ?? 'agent claimed completion', 180);
     if (latestGit && latestGit.snapshot.dirty) {
       evidence.push(
         evidenceRef(
           latestGit.event,
           'intervention',
-          'completion_without_evidence',
-          'Git evidence contradicts the completion claim',
-          gitEvidenceDetail(latestGit.snapshot),
+          signal,
+          missingLoopEvidence ? 'Git evidence does not satisfy the loop stop condition' : 'Git evidence contradicts the completion claim',
+          missingLoopEvidence ? `${detail}; ${gitEvidenceDetail(latestGit.snapshot)}` : gitEvidenceDetail(latestGit.snapshot),
         ),
       );
     } else {
@@ -244,9 +272,9 @@ function judgeSession(summary: RunningSummary, events: LoopwatchEvent[], config:
         evidenceRef(
           completionClaim,
           'intervention',
-          'completion_without_evidence',
-          'Completion claim has no supporting validation evidence',
-          compact(textFromEvent(completionClaim) ?? 'agent claimed completion', 180),
+          signal,
+          title,
+          detail,
         ),
       );
     }
@@ -276,7 +304,7 @@ function judgeSession(summary: RunningSummary, events: LoopwatchEvent[], config:
     status,
     evidence,
     requiresStrongModel: evidence.some((item) => item.severity !== 'calm'),
-    reason: evidence.length === 0 ? `cheap judge found no concerns for ${summary.goal}` : evidence.map((item) => item.signal).join(','),
+    reason: evidence.length === 0 ? judgeReason(summary, loop) : evidence.map((item) => item.signal).join(','),
   };
 }
 
@@ -299,6 +327,99 @@ function summarizeSession(events: LoopwatchEvent[]): RunningSummary {
     validation: validation.slice(-MAX_SUMMARY_ITEMS),
     concerns: [],
   };
+}
+
+function detectSessionLoop(events: LoopwatchEvent[], config: ConvergenceConfig): LoopAnchor | undefined {
+  const opening = openingUserMessage(events);
+  if (!opening) return undefined;
+
+  const { loops, threshold } = loopAnchoringOptions(config);
+  if (loops.length === 0) return undefined;
+
+  const detection = detectLoop(opening, loops, threshold * 12);
+  if (!detection.anchored || !detection.match) return undefined;
+
+  const { loop, score, reason } = detection.match;
+  const confidence = scoreToConfidence(score);
+  return {
+    loopId: loop.id,
+    title: loop.title,
+    source: 'opening_prompt',
+    confidence,
+    threshold,
+    reason,
+    stopCondition: loop.stopCondition,
+  };
+}
+
+function openingUserMessage(events: LoopwatchEvent[]): string | undefined {
+  const opening = events.find((event) => event.kind === 'message' && event.actor.type === 'user' && !isToolResultMessage(event));
+  return opening ? textFromEvent(opening) : undefined;
+}
+
+function judgeReason(summary: RunningSummary, loop: LoopAnchor | undefined): string {
+  if (loop) return `cheap judge found no concerns against ${loop.title} stop condition: ${loop.stopCondition.evidence}`;
+  return `cheap judge found no concerns for ${summary.goal}`;
+}
+
+function loopAnchoringOptions(config: ConvergenceConfig): { loops: Loop[]; threshold: number } {
+  if (config.loopAnchoring) {
+    return {
+      loops: config.loopAnchoring.loops ?? STARTER_LOOPS,
+      threshold: config.loopAnchoring.confidenceThreshold ?? scoreToConfidence(DEFAULT_LOOP_ANCHOR_SCORE_THRESHOLD),
+    };
+  }
+  if (config.loops || config.loopAnchorScoreThreshold !== undefined) {
+    return {
+      loops: config.loops ?? STARTER_LOOPS,
+      threshold: scoreToConfidence(config.loopAnchorScoreThreshold ?? DEFAULT_LOOP_ANCHOR_SCORE_THRESHOLD),
+    };
+  }
+  return { loops: [], threshold: scoreToConfidence(DEFAULT_LOOP_ANCHOR_SCORE_THRESHOLD) };
+}
+
+function scoreToConfidence(score: number): number {
+  return Math.max(0, Math.min(1, score / 12));
+}
+
+function requiredValidationEvidenceObserved(successfulValidations: LoopwatchEvent[], loop: LoopAnchor | undefined): boolean {
+  if (!loop) return successfulValidations.length > 0;
+  if (!loop.stopCondition.observable) return successfulValidations.length > 0;
+  return successfulValidations.some((event) => validationEvidenceMatchesStopCondition(event, loop));
+}
+
+function validationEvidenceMatchesStopCondition(event: LoopwatchEvent, loop: LoopAnchor): boolean {
+  const terms = significantTerms(loop.stopCondition.evidence);
+  if (terms.length === 0) return true;
+  const evidence = normalizeEvidenceText(validationEvidenceText(event));
+  const matched = terms.filter((term) => evidence.includes(term));
+  return matched.length >= Math.min(4, Math.ceil(terms.length * 0.35));
+}
+
+function validationEvidenceText(event: LoopwatchEvent): string {
+  const payload = payloadRecord(event);
+  const parts = [
+    commandFromEvent(event),
+    textFromEvent(event),
+    stringValue(payload?.output),
+    stringValue(recordValue(payload?.validation)?.detail),
+  ];
+  return parts.filter((part): part is string => part !== undefined).join(' ');
+}
+
+function significantTerms(value: string): string[] {
+  const stopWords = new Set(['and', 'the', 'with', 'that', 'this', 'when', 'then', 'from', 'into', 'only', 'every', 'stated', 'condition', 'evidence']);
+  return [
+    ...new Set(
+      normalizeEvidenceText(value)
+        .split(/\s+/)
+        .filter((term) => term.length >= 4 && !stopWords.has(term)),
+    ),
+  ];
+}
+
+function normalizeEvidenceText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
 function latestGitSnapshot(events: LoopwatchEvent[]): GitEvidenceSnapshot | undefined {

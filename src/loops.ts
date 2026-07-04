@@ -24,6 +24,23 @@ export const LoopSchema = z.object({
 });
 export type Loop = z.infer<typeof LoopSchema>;
 
+export const DEFAULT_LOOP_ANCHOR_SCORE_THRESHOLD = 6;
+export type LoopConfidence = 'low' | 'medium' | 'high';
+
+export interface LoopMatch {
+  loop: Loop;
+  score: number;
+  matched: string[];
+  confidence: LoopConfidence;
+  reason: string;
+}
+
+export interface LoopDetection {
+  anchored: boolean;
+  threshold: number;
+  match?: LoopMatch;
+}
+
 export const StoredUserLoopsSchema = z.array(LoopSchema);
 
 export const LoopLibraryResponseSchema = z.object({
@@ -146,7 +163,7 @@ export function recommendLoop(task: string, loops: Loop[] = STARTER_LOOPS): Coac
   if (!normalizedTask) throw new Error('task is required for Loop recommendation');
   if (loops.length === 0) throw new Error('Loop Library is empty');
 
-  const ranked = loops.map((loop) => scoreLoop(normalizedTask, loop)).sort((a, b) => b.score - a.score || a.loop.title.localeCompare(b.loop.title));
+  const ranked = rankLoopCandidates(normalizedTask, loops);
   const best = ranked[0]!;
   return CoachingCardSchema.parse({
     type: 'coaching',
@@ -165,6 +182,22 @@ export async function recommendLoopFromLibrary(task: string, options: LoopLibrar
   return LoopRecommendationResponseSchema.parse({ ok: true, card, loops: library.loops, userLoopsPath: library.userLoopsPath });
 }
 
+export function detectLoop(task: string, loops: Loop[] = STARTER_LOOPS, threshold = DEFAULT_LOOP_ANCHOR_SCORE_THRESHOLD): LoopDetection {
+  const normalizedTask = task.trim();
+  if (!normalizedTask || loops.length === 0) return { anchored: false, threshold };
+
+  const [best] = rankLoopCandidates(normalizedTask, loops);
+  if (!best || best.score < threshold) {
+    return { anchored: false, threshold, ...(best ? { match: best } : {}) };
+  }
+
+  return { anchored: true, threshold, match: best };
+}
+
+export function rankLoopCandidates(task: string, loops: Loop[] = STARTER_LOOPS): LoopMatch[] {
+  return loops.map((loop) => scoreLoop(task, loop)).sort((a, b) => b.score - a.score || a.loop.title.localeCompare(b.loop.title));
+}
+
 async function readUserLoops(userLoopsPath: string): Promise<Loop[]> {
   try {
     const raw = await readFile(userLoopsPath, 'utf8');
@@ -176,13 +209,14 @@ async function readUserLoops(userLoopsPath: string): Promise<Loop[]> {
   }
 }
 
-function scoreLoop(task: string, loop: Loop): { loop: Loop; score: number; matched: string[] } {
+function scoreLoop(task: string, loop: Loop): LoopMatch {
   const taskTokens = new Set(tokenize(task));
   const tagMatches = loop.tags.filter((tag) => taskTokens.has(normalizeToken(tag)));
   const triggerTokens = tokenize(`${loop.title} ${loop.summary} ${loop.trigger}`);
   const triggerMatches = [...new Set(triggerTokens.filter((token) => taskTokens.has(token)))];
   const score = tagMatches.length * 4 + triggerMatches.length * 2 + semanticBoost(task, loop);
-  return { loop, score, matched: [...new Set([...tagMatches, ...triggerMatches])] };
+  const matched = [...new Set([...tagMatches, ...triggerMatches])];
+  return { loop, score, matched, confidence: confidenceForScore(score), reason: recommendationReason({ loop, score, matched }) };
 }
 
 function semanticBoost(task: string, loop: Loop): number {
@@ -197,6 +231,12 @@ function semanticBoost(task: string, loop: Loop): number {
 function recommendationReason(scored: { loop: Loop; score: number; matched: string[] }): string {
   if (scored.matched.length > 0) return `Matched ${scored.loop.title} from task terms: ${scored.matched.slice(0, 5).join(', ')}.`;
   return `Defaulted to ${scored.loop.title}; it is the safest starter loop when the task needs a complete verified outcome.`;
+}
+
+function confidenceForScore(score: number): LoopConfidence {
+  if (score >= 12) return 'high';
+  if (score >= DEFAULT_LOOP_ANCHOR_SCORE_THRESHOLD) return 'medium';
+  return 'low';
 }
 
 function copyPromptForLoop(task: string, loop: Loop): string {

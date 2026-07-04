@@ -10,6 +10,19 @@ const ConvergenceSpendSchema = z.object({
   estimatedCostUsd: z.number().nonnegative(),
 });
 
+const LoopAnchorSchema = z.object({
+  loopId: z.string().min(1),
+  title: z.string().min(1),
+  source: z.literal('opening_prompt'),
+  confidence: z.number().min(0).max(1),
+  threshold: z.number().min(0).max(1).optional(),
+  reason: z.string().min(1),
+  stopCondition: z.object({
+    evidence: z.string().min(1),
+    observable: z.boolean(),
+  }),
+});
+
 const ConvergenceSummarySchema = z.object({
   goal: z.string().min(1),
   done: z.array(z.string()),
@@ -48,6 +61,7 @@ const ConvergenceSessionSchema = z.object({
   eventCount: z.number().int().nonnegative(),
   meaningfulEventCount: z.number().int().nonnegative(),
   lastEventAt: z.string().min(1),
+  loopAnchor: LoopAnchorSchema.optional(),
 });
 
 const ConvergenceResponseSchema = z.object({

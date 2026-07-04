@@ -72,12 +72,14 @@ const baselineChecks: VerificationCheck[] = [
   {
     name: 'Convergence watcher contract',
     command: ['pnpm', 'convergence:check'],
-    issues: ['#8'],
+    issues: ['#8', '#14'],
     adrs: ['ADR-0002', 'ADR-0010', 'ADR-0011'],
     proves: [
       'active sessions infer and maintain a goal/done/validation/concerns summary',
       'event-driven judge cadence is rate-capped and gated by liveness',
       'hard convergence signals escalate cheap judge checks to the strong judge with spend accounted',
+      'opening prompts above the Loop confidence bar anchor a Loop and expose its stop condition',
+      'anchored completion claims without stop-condition evidence raise weak-validation evidence',
     ],
   },
   {

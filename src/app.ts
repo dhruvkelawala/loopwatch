@@ -85,7 +85,8 @@ app.get('/loopwatch/convergence', async (c) => {
   const eventGroups = await Promise.all(runs.map((run) => recordedEventsForRun(run)));
   const recordedEvents = eventGroups.flat();
   const gitEvents = buildScopedGitEvidenceEvents(recordedEvents, { nowMs, activeAfterMs: config.idleAfterMs });
-  const snapshot = buildConvergenceSnapshot([...recordedEvents, ...gitEvents], { ...config, nowMs });
+  const library = await loadLoopLibrary();
+  const snapshot = buildConvergenceSnapshot([...recordedEvents, ...gitEvents], { ...config, nowMs, loopAnchoring: { loops: library.loops } });
 
   return c.json({ ok: true, ...snapshot });
 });

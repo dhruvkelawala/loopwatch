@@ -92,7 +92,7 @@ function convergenceRows(session: SessionView | undefined, convergenceState: Con
   }
 
   const selectedEvidence = convergence.evidence.find((item) => interventionEvidenceKey(session.id, item) === focusedEvidenceKey) ?? convergence.evidence[0];
-  return [
+  const rows: EvidenceDetail[] = [
     { label: 'status', detail: convergence.status },
     { label: 'goal', detail: convergence.summary.goal },
     { label: 'evidence', detail: selectedEvidence?.title ?? 'No convergence concerns' },
@@ -102,6 +102,17 @@ function convergenceRows(session: SessionView | undefined, convergenceState: Con
     { label: 'judge', detail: `${convergence.judge.lastTier ?? 'not run'} · cap ${Math.round(convergence.judge.rateCapMs / 1000)}s` },
     { label: 'spend', detail: `cheap ${convergence.spend.cheapCalls} · strong ${convergence.spend.strongCalls} · ${convergence.spend.estimatedTokens} tokens · $${convergence.spend.estimatedCostUsd.toFixed(6)}` },
   ];
+
+  if (convergence.loopAnchor) {
+    rows.splice(
+      2,
+      0,
+      { label: 'loop', detail: `${convergence.loopAnchor.title} · ${Math.round(convergence.loopAnchor.confidence * 100)}%` },
+      { label: 'rubric', detail: convergence.loopAnchor.stopCondition.evidence },
+    );
+  }
+
+  return rows;
 }
 
 function gitWatcherRows(session: SessionView | undefined): EvidenceDetail[] {

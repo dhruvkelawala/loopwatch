@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { z } from 'zod';
 import {
   buildConvergenceSnapshot,
   createConvergenceWatcherRegistry,
@@ -6,8 +7,10 @@ import {
   type ConvergenceSnapshot,
   type ConvergenceStatus,
   type ConvergenceSignal,
+  type SessionConvergenceState,
 } from '../src/convergence.js';
 import type { LoopwatchEvent } from '../src/events.js';
+import { STARTER_LOOPS, type Loop } from '../src/loops.js';
 
 let failures = 0;
 
@@ -75,7 +78,57 @@ function usage(id: string, atMs: number, totalTokens: number): LoopwatchEvent {
   return event({ id, atMs, kind: 'usage', actor: { type: 'system' }, payload: { id, usage: { totalTokens } } });
 }
 
-function snapshot(events: LoopwatchEvent[], config: ConvergenceConfig = {}): ConvergenceSnapshot {
+const LoopAnchorSchema = z.object({
+  loopId: z.string().min(1),
+  source: z.literal('opening_prompt'),
+  confidence: z.number().min(0).max(1),
+  threshold: z.number().min(0).max(1).optional(),
+  stopCondition: z.object({
+    evidence: z.string().min(1),
+    observable: z.boolean(),
+  }),
+});
+type LoopAnchor = z.infer<typeof LoopAnchorSchema>;
+
+type LoopAnchoringConfig = ConvergenceConfig & {
+  loopAnchoring?: {
+    loops?: Loop[];
+    confidenceThreshold?: number;
+  };
+};
+
+function loopById(loops: Loop[], id: string): Loop {
+  const loop = loops.find((candidate) => candidate.id === id);
+  assert.ok(loop, `expected loop ${id} to exist in the fixture library`);
+  return loop;
+}
+
+const featureSliceLoop = loopById(STARTER_LOOPS, 'vertical-feature-slice');
+const semanticOnlyLoop: Loop = {
+  id: 'semantic-review-readiness',
+  title: 'Semantic Review Readiness',
+  summary: 'Decide whether a design explanation satisfies reviewer concerns when the proof is qualitative.',
+  trigger: 'Use when the stop condition is reviewer acceptance, design reasoning, qualitative diff judgment, or semantic readiness rather than a deterministic command.',
+  action: 'Compare the final explanation and diff against the reviewer concerns, then cite the reasoning that resolves them.',
+  verification: 'Use LLM or diff judgment over the changed explanation; do not require one exact verification command.',
+  memory: 'Record the concerns, reasoning evidence, and diff regions that made the reviewer acceptance plausible.',
+  stopCondition: {
+    evidence: 'Reviewer concerns are semantically answered by the explanation and diff, with no unresolved contradiction.',
+    observable: false,
+  },
+  tags: ['review', 'semantic', 'diff', 'judgment', 'reasoning', 'acceptance'],
+};
+
+function loopAnchoringConfig(loops: Loop[] = STARTER_LOOPS): LoopAnchoringConfig {
+  return {
+    loopAnchoring: {
+      loops,
+      confidenceThreshold: 0.5,
+    },
+  };
+}
+
+function snapshot(events: LoopwatchEvent[], config: LoopAnchoringConfig = {}): ConvergenceSnapshot {
   return buildConvergenceSnapshot(events, {
     nowMs: baseMs + 12_000,
     minJudgeIntervalMs: 60_000,
@@ -94,6 +147,32 @@ function onlySession(result: ConvergenceSnapshot) {
 
 function evidenceSignals(result: ConvergenceSnapshot): ConvergenceSignal[] {
   return onlySession(result).evidence.map((item) => item.signal);
+}
+
+function loopAnchorFor(session: SessionConvergenceState): LoopAnchor {
+  if (!('loopAnchor' in session)) assert.fail('expected session.loopAnchor to expose the opening-prompt Loop anchor');
+  return LoopAnchorSchema.parse(session.loopAnchor);
+}
+
+function assertNoLoopAnchor(session: SessionConvergenceState): void {
+  if (!('loopAnchor' in session)) return;
+  assert.ok(session.loopAnchor === undefined || session.loopAnchor === null, 'low-confidence opening prompt must remain unanchored');
+}
+
+function assertLoopAnchor(session: SessionConvergenceState, loop: Loop, minimumConfidence = 0.5): LoopAnchor {
+  const anchor = loopAnchorFor(session);
+  assert.equal(anchor.loopId, loop.id, 'session.loopAnchor.loopId is the selected Loop id');
+  assert.equal(anchor.source, 'opening_prompt', 'Loop anchor comes from the opening prompt, not later agent evidence');
+  assert.ok(anchor.confidence >= minimumConfidence, `anchor confidence ${anchor.confidence} is below the configured threshold ${minimumConfidence}`);
+  if (anchor.threshold !== undefined) assert.ok(anchor.confidence >= anchor.threshold, 'anchor confidence clears its exposed threshold');
+  assert.deepEqual(anchor.stopCondition, loop.stopCondition, 'session.loopAnchor.stopCondition mirrors the selected Loop stop condition');
+  return anchor;
+}
+
+function evidenceWithSignal(session: SessionConvergenceState, signal: ConvergenceSignal) {
+  const evidence = session.evidence.find((item) => item.signal === signal);
+  assert.ok(evidence, `expected convergence evidence with signal ${signal}`);
+  return evidence;
 }
 
 function assertStatusWithEvidence(result: ConvergenceSnapshot, status: ConvergenceStatus, signal: ConvergenceSignal, eventId: string) {
@@ -133,6 +212,111 @@ await check('active sessions infer the opening goal, maintain summary fields, an
   assert.equal(result.spend.cheapCalls, 1);
   assert.equal(result.spend.strongCalls, 0);
   assert.ok(result.nextPollMs > 0, 'endpoint snapshot carries the next Cockpit poll hint');
+});
+
+await check('opening feature-slice prompt anchors the vertical-feature-slice Loop on the session', () => {
+  const result = snapshot(
+    [
+      userMessage(
+        'loop-goal-feature-slice',
+        0,
+        'Implement issue #14 Loop auto-detection as a vertical feature slice with acceptance criteria, deterministic tests, and reviewer evidence.',
+      ),
+    ],
+    loopAnchoringConfig(),
+  );
+
+  const session = onlySession(result);
+  assert.match(session.summary.goal, /Loop auto-detection/);
+  assertLoopAnchor(session, featureSliceLoop);
+});
+
+await check('low-confidence opening prompt stays unanchored while preserving the inferred goal', () => {
+  const prompt = 'Can you summarize why sourdough starter smells different after a cold night?';
+  const result = snapshot([userMessage('loop-goal-unrelated', 0, prompt)], loopAnchoringConfig());
+
+  const session = onlySession(result);
+  assertNoLoopAnchor(session);
+  assert.equal(session.summary.goal, prompt);
+  assert.equal(session.status, 'calm');
+});
+
+await check('anchored completion without stop-condition evidence raises weak validation citing the Loop stop condition', () => {
+  const result = snapshot(
+    [
+      userMessage(
+        'loop-goal-missing-stop-proof',
+        0,
+        'Ship issue #14 as a vertical feature slice: implement loop auto-detection, satisfy every acceptance criterion, and record reviewer evidence.',
+      ),
+      validationResult('types-only-pass', 2_000, 'pnpm tsc --noEmit', 0, 'TypeScript passed.'),
+      agentMessage('premature-loop-done', 4_000, 'Done — issue #14 is complete and ready to ship.'),
+    ],
+    loopAnchoringConfig(),
+  );
+
+  const session = onlySession(result);
+  assertLoopAnchor(session, featureSliceLoop);
+  assert.notEqual(session.status, 'calm', 'a completion claim without Loop stop-condition evidence must not stay calm');
+  const evidence = evidenceWithSignal(session, 'weak_validation');
+  assert.ok(
+    evidence.detail.includes(featureSliceLoop.stopCondition.evidence),
+    'weak-validation evidence cites the anchored Loop stop condition',
+  );
+});
+
+await check('anchored completion with validation evidence matching the stop condition stays calm', () => {
+  const result = snapshot(
+    [
+      userMessage(
+        'loop-goal-stop-proof',
+        0,
+        'Implement issue #14 as one vertical feature slice and close it only when deterministic harness output and reviewer sign-off prove every acceptance criterion.',
+      ),
+      validationResult(
+        'loop-stop-condition-pass',
+        3_000,
+        'pnpm convergence:check',
+        0,
+        'All stated acceptance criteria pass with deterministic harness output and reviewer sign-off; no unverified TODO or shim remains.',
+      ),
+      agentMessage('loop-stop-done', 5_000, 'Done — the deterministic harness output and reviewer sign-off satisfy the Loop stop condition.'),
+    ],
+    loopAnchoringConfig(),
+  );
+
+  const session = onlySession(result);
+  assertLoopAnchor(session, featureSliceLoop);
+  assert.equal(session.status, 'calm');
+  assert.deepEqual(session.evidence, []);
+});
+
+await check('semantic-only stop conditions use judge/diff evidence without exact command matching false positives', () => {
+  const result = snapshot(
+    [
+      userMessage(
+        'semantic-loop-goal',
+        0,
+        'Use the Semantic Review Readiness loop to decide whether the reviewer concerns are resolved by the design explanation and diff judgment.',
+      ),
+      validationResult(
+        'semantic-judge-pass',
+        3_000,
+        'pnpm semantic:check',
+        0,
+        'Diff judgment passed: the changed explanation resolves the reviewer concerns and leaves no unresolved contradiction.',
+      ),
+      agentMessage('semantic-loop-done', 5_000, 'Done — the reviewer concerns are semantically resolved by the explanation and diff.'),
+    ],
+    loopAnchoringConfig([...STARTER_LOOPS, semanticOnlyLoop]),
+  );
+
+  const session = onlySession(result);
+  const anchor = assertLoopAnchor(session, semanticOnlyLoop);
+  assert.equal(anchor.stopCondition.observable, false, 'fixture Loop is semantic-only rather than deterministic-command observable');
+  assert.equal(session.status, 'calm');
+  assert.deepEqual(session.evidence, []);
+  assert.equal(session.judge.lastTier, 'cheap', 'semantic-only stop conditions should not create a false positive that escalates to strong judge');
 });
 
 await check('failed validation flips the session to watch and references the failing validation event', () => {
