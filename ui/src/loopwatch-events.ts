@@ -7,6 +7,15 @@ export type Severity = 'intervention' | 'watch' | 'calm';
 export type Liveness = 'active' | 'idle' | 'ended';
 export type TimelineLaneName = 'request' | 'tools' | 'files' | 'git' | 'validation' | 'convergence';
 
+export type CapabilityState = 'available' | 'unavailable';
+
+export interface SourceCapabilityBadge {
+  key: string;
+  label: string;
+  state: CapabilityState;
+  detail: string;
+}
+
 export interface TimelineItem {
   id: string;
   at: string;
@@ -38,6 +47,7 @@ export interface SessionView {
   events: LoopwatchEvent[];
   lanes: TimelineLane[];
   convergence?: SessionConvergence;
+  capabilities: SourceCapabilityBadge[];
 }
 
 const RECORDED_EVENT_MESSAGE = 'loopwatch.event.recorded';
@@ -104,8 +114,8 @@ function buildSessionView(id: string, events: LoopwatchEvent[], nowMs: number): 
   const first = events[0];
   const last = events.at(-1) ?? first;
   const title = titleForSession(events);
-  const repo = latestString(events, (event) => event.context?.repo) ?? repoFromCwd(latestString(events, (event) => event.context?.cwd)) ?? 'unknown repo';
-  const branch = latestString(events, (event) => event.context?.gitBranch) ?? 'unknown branch';
+  const repo = latestString(events, (event) => event.context?.repo) ?? repoFromCwd(latestString(events, (event) => event.context?.cwd)) ?? 'repo unavailable';
+  const branch = latestString(events, (event) => event.context?.gitBranch) ?? 'branch unavailable';
   const liveness = livenessForEvent(last, nowMs);
 
   return {
@@ -125,6 +135,7 @@ function buildSessionView(id: string, events: LoopwatchEvent[], nowMs: number): 
     lastEvent: timelineItemForEvent(last).detail,
     events,
     lanes: buildTimelineLanes(events),
+    capabilities: capabilityBadgesForSession(first?.source ?? 'unknown', events),
   };
 }
 
@@ -133,6 +144,47 @@ function sourceLabel(source: string): string {
   if (source.toLowerCase() === 'codex') return 'Codex';
   if (source.toLowerCase() === 'pi') return 'Pi';
   return source;
+}
+
+function capabilityBadgesForSession(source: string, events: LoopwatchEvent[]): SourceCapabilityBadge[] {
+  const normalized = source.toLowerCase();
+  const hasToolCalls = events.some((event) => event.kind === 'tool_call' || event.kind === 'tool_result');
+  const hasBranch = events.some((event) => !!event.context?.gitBranch);
+  const hasCost = events.some((event) => costFromEvent(event) !== undefined);
+  const hasTokens = events.some((event) => tokenCountFromEvent(event) !== undefined);
+
+  if (normalized === 'claude') {
+    return [
+      capability('transcript', 'transcript', 'available', 'JSONL transcript activity'),
+      capability('tool-calls', 'tools', hasToolCalls ? 'available' : 'unavailable', hasToolCalls ? 'tool calls observed' : 'no tool calls observed yet'),
+      capability('tokens', 'tokens', hasTokens ? 'available' : 'unavailable', hasTokens ? 'token usage observed' : 'token usage unavailable in this session'),
+      capability('cost', 'cost', 'unavailable', 'Claude adapter does not provide direct cost'),
+      capability('branch', 'branch', hasBranch ? 'available' : 'unavailable', hasBranch ? 'branch from transcript' : 'branch unavailable'),
+    ];
+  }
+  if (normalized === 'codex') {
+    return [
+      capability('transcript', 'transcript', 'available', 'rollout JSONL activity'),
+      capability('tool-calls', 'tools', hasToolCalls ? 'available' : 'unavailable', hasToolCalls ? 'tool calls observed' : 'no tool calls observed yet'),
+      capability('tokens', 'tokens', 'unavailable', 'Codex usage is not exposed as shared core data'),
+      capability('cost', 'cost', 'unavailable', 'Codex cost is unavailable'),
+      capability('branch', 'branch', hasBranch ? 'available' : 'unavailable', hasBranch ? 'branch from event context' : 'branch unavailable'),
+    ];
+  }
+  if (normalized === 'pi') {
+    return [
+      capability('transcript', 'transcript', 'available', 'Pi typed JSONL events'),
+      capability('tool-calls', 'tools', hasToolCalls ? 'available' : 'unavailable', hasToolCalls ? 'tool or validation events observed' : 'no tool events observed yet'),
+      capability('cost', 'cost', hasCost ? 'available' : 'unavailable', hasCost ? 'direct Pi cost observed' : 'direct Pi cost unavailable in this session'),
+      capability('tokens', 'tokens', hasTokens ? 'available' : 'unavailable', hasTokens ? 'token usage observed' : 'token usage unavailable in this session'),
+      capability('branch', 'branch', hasBranch ? 'available' : 'unavailable', hasBranch ? 'branch inferred from git/worktree' : 'branch unavailable'),
+    ];
+  }
+  return [capability('transcript', 'transcript', 'unavailable', 'unknown source capability')];
+}
+
+function capability(key: string, label: string, state: CapabilityState, detail: string): SourceCapabilityBadge {
+  return { key, label, state, detail };
 }
 
 function titleForSession(events: LoopwatchEvent[]): string {
@@ -257,9 +309,13 @@ function textFromEvent(event: LoopwatchEvent): string | undefined {
   const payload = payloadRecord(event);
   if (!payload) return undefined;
 
+  const native = sourceEnvelopePayload(payload);
   if (typeof payload.content === 'string') return payload.content;
-  const message = recordValue(payload.message);
-  const content = message?.content;
+  const directContent = textFromContent(payload.items) ?? textFromContent(payload.content);
+  if (directContent) return directContent;
+
+  const message = recordValue(payload.message) ?? (native?.type === 'message' ? native : recordValue(native?.message));
+  const content = message?.content ?? native?.content ?? native?.items;
   return textFromContent(content);
 }
 
@@ -288,7 +344,12 @@ function toolNameFromEvent(event: LoopwatchEvent): string | undefined {
   if (typeof block?.name === 'string') return block.name;
 
   const payload = payloadRecord(event);
+  const native = payload ? sourceEnvelopePayload(payload) : undefined;
+  const tool = recordValue(payload?.tool) ?? recordValue(native?.tool);
+  if (typeof tool?.name === 'string') return tool.name;
+  if (typeof native?.name === 'string') return native.name;
   if (typeof payload?.toolName === 'string') return payload.toolName;
+  if (recordValue(payload?.validation)?.command) return 'validation';
   return undefined;
 }
 
@@ -296,13 +357,23 @@ function bashCommandFromEvent(event: LoopwatchEvent): string | undefined {
   const block = firstToolUseBlock(event);
   const input = recordValue(block?.input);
   if (typeof input?.command === 'string') return input.command;
+
+  const payload = payloadRecord(event);
+  const native = payload ? sourceEnvelopePayload(payload) : undefined;
+  const tool = recordValue(payload?.tool) ?? recordValue(native?.tool);
+  const args = recordValue(tool?.arguments) ?? recordValue(native?.arguments);
+  if (typeof args?.command === 'string') return args.command;
+  if (typeof tool?.command === 'string') return tool.command;
+  const validation = recordValue(payload?.validation);
+  if (typeof validation?.command === 'string') return validation.command;
   return undefined;
 }
 
 function firstToolUseBlock(event: LoopwatchEvent): Record<string, unknown> | undefined {
   const payload = payloadRecord(event);
-  const message = recordValue(payload?.message);
-  const content = message?.content;
+  const native = payload ? sourceEnvelopePayload(payload) : undefined;
+  const message = recordValue(payload?.message) ?? (native?.type === 'message' ? native : recordValue(native?.message));
+  const content = message?.content ?? native?.content;
   if (!Array.isArray(content)) return undefined;
   return content.map(recordValue).find((block) => block?.type === 'tool_use');
 }
@@ -311,13 +382,48 @@ function payloadRecord(event: LoopwatchEvent): Record<string, unknown> | undefin
   return recordValue(event.payload);
 }
 
+function sourceEnvelopePayload(payload: Record<string, unknown>): Record<string, unknown> | undefined {
+  return recordValue(payload.payload);
+}
+
+function tokenCountFromEvent(event: LoopwatchEvent): number | undefined {
+  const payload = payloadRecord(event);
+  if (!payload) return undefined;
+  const native = sourceEnvelopePayload(payload);
+  const message = recordValue(payload.message) ?? recordValue(native?.message);
+  const usage = recordValue(payload.usage) ?? recordValue(message?.usage) ?? recordValue(native?.usage);
+  const direct = numberValue(usage?.totalTokens) ?? numberValue(usage?.total_tokens);
+  if (direct !== undefined) return direct;
+  const input = numberValue(usage?.input);
+  const output = numberValue(usage?.output);
+  return input !== undefined && output !== undefined ? input + output : undefined;
+}
+
+function costFromEvent(event: LoopwatchEvent): number | undefined {
+  const payload = payloadRecord(event);
+  if (!payload) return undefined;
+  const native = sourceEnvelopePayload(payload);
+  const message = recordValue(payload.message) ?? recordValue(native?.message);
+  const usage = recordValue(payload.usage) ?? recordValue(message?.usage) ?? recordValue(native?.usage);
+  const cost = recordValue(usage?.cost);
+  return numberValue(cost?.total) ?? numberValue(usage?.costUsd) ?? numberValue(usage?.cost_usd);
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
 function recordValue(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
 }
 
 function eventFingerprint(event: LoopwatchEvent): string {
   const payload = payloadRecord(event);
-  const uuid = typeof payload?.uuid === 'string' ? payload.uuid : undefined;
+  const native = payload ? sourceEnvelopePayload(payload) : undefined;
+  const uuid =
+    (typeof payload?.uuid === 'string' ? payload.uuid : undefined) ??
+    (typeof payload?.id === 'string' ? payload.id : undefined) ??
+    (typeof native?.id === 'string' ? native.id : undefined);
   if (uuid) return `${event.source}:${event.sessionId}:${uuid}`;
   return `${event.source}:${event.sessionId}:${event.timestamp}:${event.kind}:${event.actor.type}:${compact(textFromEvent(event) ?? '', 80)}`;
 }

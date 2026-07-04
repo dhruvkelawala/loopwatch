@@ -18,9 +18,9 @@ use tauri::{Manager, RunEvent, WindowEvent};
 const DEV_ENGINE_PORT: u16 = 3583;
 const ENGINE_TOKEN_BYTES: usize = 32;
 
-/// Env switch for disabling adapter supervision in local diagnostics.
+/// Env switches for disabling adapter supervision in local diagnostics.
+const SOURCE_ADAPTERS_ENV: &str = "LOOPWATCH_SOURCE_ADAPTERS";
 const CLAUDE_ADAPTER_ENV: &str = "LOOPWATCH_CLAUDE_ADAPTER";
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EngineLaunchConfig {
     port: u16,
@@ -40,7 +40,7 @@ impl EngineLaunchConfig {
 struct BackgroundProcesses {
     engine_config: EngineLaunchConfig,
     engine: Mutex<Option<Child>>,
-    claude_adapter: Mutex<Option<Child>>,
+    source_adapters: Mutex<Option<Child>>,
 }
 
 impl BackgroundProcesses {
@@ -49,7 +49,7 @@ impl BackgroundProcesses {
     /// Safe to call more than once: each child handle is taken out on the first
     /// call, so later calls (e.g. the `Drop` fallback) become no-ops.
     fn stop(&self) {
-        self.stop_child("Claude adapter", &self.claude_adapter);
+        self.stop_child("Source adapters", &self.source_adapters);
         self.stop_child("Flue engine", &self.engine);
     }
 
@@ -269,7 +269,7 @@ fn spawn_background_processes() -> Result<BackgroundProcesses, Box<dyn std::erro
     let engine_config = build_engine_launch_config()?;
     write_runtime_config(&project_root, &engine_config)?;
     let mut engine = spawn_flue_engine(&project_root, &engine_config)?;
-    let claude_adapter = match spawn_claude_adapter(&project_root, &engine_config) {
+    let source_adapters = match spawn_source_adapters(&project_root, &engine_config) {
         Ok(adapter) => adapter,
         Err(error) => {
             terminate_child("Flue engine", &mut engine);
@@ -280,7 +280,7 @@ fn spawn_background_processes() -> Result<BackgroundProcesses, Box<dyn std::erro
     Ok(BackgroundProcesses {
         engine_config,
         engine: Mutex::new(Some(engine)),
-        claude_adapter: Mutex::new(claude_adapter),
+        source_adapters: Mutex::new(source_adapters),
     })
 }
 
@@ -330,19 +330,19 @@ fn spawn_flue_engine(
     Ok(child)
 }
 
-fn spawn_claude_adapter(
+fn spawn_source_adapters(
     project_root: &Path,
     engine_config: &EngineLaunchConfig,
 ) -> Result<Option<Child>, Box<dyn std::error::Error>> {
-    if !claude_adapter_enabled() {
-        println!("[loopwatch] Claude adapter disabled by {CLAUDE_ADAPTER_ENV}");
+    if !source_adapters_enabled() {
+        println!("[loopwatch] Source adapters disabled by {SOURCE_ADAPTERS_ENV}");
         return Ok(None);
     }
 
-    let adapter_path = project_root.join("dist/adapter-claude.mjs");
+    let adapter_path = project_root.join("dist/adapter-sources.mjs");
     if !adapter_path.exists() {
         return Err(format!(
-            "Claude adapter artifact is missing at {}. Run `pnpm build` before launching Loopwatch.",
+            "Source adapter artifact is missing at {}. Run `pnpm build` before launching Loopwatch.",
             adapter_path.display()
         )
         .into());
@@ -361,15 +361,21 @@ fn spawn_claude_adapter(
 
     thread::sleep(Duration::from_millis(250));
     if let Some(status) = child.try_wait()? {
-        return Err(format!("Claude adapter exited during startup with status {status}.").into());
+        return Err(format!("Source adapters exited during startup with status {status}.").into());
     }
 
-    println!("[loopwatch] spawned Claude adapter pid={}", child.id());
+    println!("[loopwatch] spawned Source adapters pid={}", child.id());
 
     Ok(Some(child))
 }
 
-fn claude_adapter_enabled() -> bool {
+fn source_adapters_enabled() -> bool {
+    if let Ok(value) = env::var(SOURCE_ADAPTERS_ENV) {
+        return !matches!(
+            value.to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        );
+    }
     match env::var(CLAUDE_ADAPTER_ENV) {
         Ok(value) => !matches!(
             value.to_ascii_lowercase().as_str(),

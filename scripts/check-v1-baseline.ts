@@ -26,6 +26,17 @@ const baselineChecks: VerificationCheck[] = [
     ],
   },
   {
+    name: 'Source adapter parity contract',
+    command: ['pnpm', 'source:check'],
+    issues: ['#11'],
+    adrs: ['ADR-0003', 'ADR-0004', 'ADR-0009'],
+    proves: [
+      'Codex and Pi transcript records map to normalized Loopwatch Events',
+      'source-native payloads and source-qualified session identity are preserved',
+      'Cockpit capability badges distinguish available data from unavailable data',
+    ],
+  },
+  {
     name: 'Flue file-backed persistence',
     command: ['pnpm', 'persistence:check'],
     issues: ['#1'],

@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "adapter:claude": "tsx scripts/adapter-claude.ts",
-    "adapter:build": "esbuild scripts/adapter-claude.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/adapter-claude.mjs",
+    "adapter:sources": "tsx scripts/adapter-sources.ts",
+    "adapter:build": "esbuild scripts/adapter-sources.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/adapter-sources.mjs && esbuild scripts/adapter-claude.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/adapter-claude.mjs",
     "build": "flue build --target node && pnpm adapter:build",
     "dev": "flue dev --target node",
     "ui:dev": "vite --config ui/vite.config.ts",
@@ -15,6 +16,7 @@
     "tauri:build": "tauri build",
     "adapter:check": "tsx scripts/check-claude-adapter.ts",
     "events:check": "tsx scripts/check-normalized-event.ts",
+    "source:check": "tsx scripts/check-source-parity.ts",
     "ingest:check": "tsx scripts/check-claude-ingest.ts",
     "security:check": "tsx scripts/check-engine-security.ts",
     "cockpit:check": "tsx scripts/check-cockpit-live.ts",

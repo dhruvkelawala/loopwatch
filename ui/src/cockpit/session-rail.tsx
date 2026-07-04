@@ -12,6 +12,7 @@ export function SessionRail({
   onSelect: (id: string) => void;
 }) {
   const count = groupedSessions.reduce((sum, group) => sum + group.sessions.length, 0);
+  const sources = [...new Set(groupedSessions.flatMap((group) => group.sessions.map((session) => session.source)))].sort();
 
   return (
     <aside className="flex min-h-0 flex-col overflow-hidden border-r border-watch-line bg-watch-bg-side">
@@ -43,11 +44,13 @@ export function SessionRail({
         )}
       </div>
 
-      <div className="flex items-center gap-2 border-t border-watch-line px-3.5 py-2.5 text-[10.5px] text-watch-ink-3">
-        <span className="font-mono uppercase tracking-[.1em]">Sources</span>
-        <span className="rounded-[5px] border border-watch-accent/30 bg-watch-accent/12 px-1.5 py-0.5 font-mono text-[9px] text-watch-accent">
-          Claude live
-        </span>
+      <div className="flex flex-wrap items-center gap-1.5 border-t border-watch-line px-3.5 py-2.5 text-[10.5px] text-watch-ink-3">
+        <span className="mr-0.5 font-mono uppercase tracking-[.1em]">Sources</span>
+        {sources.length === 0 ? (
+          <SourceBadge label="unavailable" />
+        ) : (
+          sources.map((source) => <SourceBadge key={source} label={source} />)
+        )}
       </div>
     </aside>
   );
@@ -79,11 +82,37 @@ function SessionRow({ session, selected, onSelect }: { session: SessionView; sel
           {session.source} · {session.repo} · {session.branch}
         </span>
         <span className="mt-1 block truncate font-mono text-[10px] text-watch-ink-2">phase · {session.phase}</span>
+        <span className="mt-1 flex flex-wrap gap-1">
+          {session.capabilities.map((capability) => (
+            <CapabilityBadge key={capability.key} label={capability.label} state={capability.state} title={capability.detail} />
+          ))}
+        </span>
       </span>
       <span className="grid justify-items-end gap-1">
         <span className="font-mono text-[10px] text-watch-ink-2">{session.elapsed}</span>
         <LivenessPill liveness={session.liveness} />
       </span>
     </button>
+  );
+}
+
+function SourceBadge({ label }: { label: string }) {
+  return (
+    <span className="rounded-[5px] border border-watch-accent/30 bg-watch-accent/12 px-1.5 py-0.5 font-mono text-[9px] text-watch-accent">
+      {label}
+    </span>
+  );
+}
+
+function CapabilityBadge({ label, state, title }: { label: string; state: 'available' | 'unavailable'; title: string }) {
+  const stateClass =
+    state === 'available'
+      ? 'border-watch-accent/24 bg-watch-accent/10 text-watch-accent'
+      : 'border-watch-line bg-watch-panel text-watch-ink-3';
+
+  return (
+    <span className={`rounded-[5px] border px-1.5 py-0.5 font-mono text-[9px] ${stateClass}`} title={title}>
+      {state === 'available' ? label : `${label} unavailable`}
+    </span>
   );
 }
