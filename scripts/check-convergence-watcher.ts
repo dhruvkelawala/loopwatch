@@ -117,6 +117,23 @@ type SessionWithPivotNudge = SessionConvergenceState & {
   pivotNudge?: ExpectedPivotNudge;
 };
 
+const PostSessionInsightSchema = z.object({
+  id: z.string().min(1),
+  sessionId: z.string().min(1),
+  createdAt: z.string().min(1),
+  source: z.literal('post_session'),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  recommendation: z.string().min(1),
+  evidenceEventIds: z.array(z.string().min(1)).min(1),
+  signal: z.enum(['drift', 'burn', 'weak_validation', 'churn', 'completion_without_evidence']),
+});
+type ExpectedPostSessionInsight = z.infer<typeof PostSessionInsightSchema>;
+
+type SessionWithPostSessionInsight = SessionConvergenceState & {
+  postSessionInsight?: unknown;
+};
+
 
 function loopById(loops: Loop[], id: string): Loop {
   const loop = loops.find((candidate) => candidate.id === id);
@@ -216,6 +233,70 @@ function assertFreshSessionRecommendation(nudge: ExpectedPivotNudge): void {
   assert.equal('startedSessionId' in record, false, 'Pivot nudge must not report that Loopwatch started a session');
   assert.equal('createdSessionId' in record, false, 'Pivot nudge must not report that Loopwatch created a session');
   assert.equal('controlledSessionId' in record, false, 'Pivot nudge must not claim control of a session');
+}
+
+function postSessionInsightFor(session: SessionConvergenceState): ExpectedPostSessionInsight {
+  const rawInsight = (session as SessionWithPostSessionInsight).postSessionInsight;
+  assert.ok(rawInsight, 'ended sessions with already-computed convergence evidence should expose session.postSessionInsight');
+  return PostSessionInsightSchema.parse(rawInsight);
+}
+
+function assertNoPostSessionInsight(session: SessionConvergenceState): void {
+  assert.equal((session as SessionWithPostSessionInsight).postSessionInsight, undefined, `${session.liveness} session must not expose a post-session insight`);
+}
+
+function assertInsightGroundsInEvidence(session: SessionConvergenceState): ExpectedPostSessionInsight {
+  const evidence = session.evidence[0];
+  assert.ok(evidence, 'test setup expects convergence evidence before asserting a post-session insight');
+
+  const insight = postSessionInsightFor(session);
+  assert.equal(insight.sessionId, session.sessionId, 'post-session insight identifies the ended source session');
+  assert.ok(Number.isFinite(Date.parse(insight.createdAt)), 'post-session insight exposes a parseable creation timestamp');
+  assert.ok(Date.parse(insight.createdAt) >= Date.parse(evidence.timestamp), 'post-session insight is not timestamped before the evidence it cites');
+  assert.equal(insight.source, 'post_session');
+  assert.deepEqual(insight.evidenceEventIds, [evidence.eventId], 'post-session insight cites the evidence receipt it learned from');
+  assert.equal(insight.signal, evidence.signal, 'post-session insight preserves the convergence signal it learned from');
+  assert.ok(insight.detail.includes(evidence.detail), 'post-session insight detail quotes the evidence detail instead of emitting generic advice');
+  return insight;
+}
+
+function assertConcreteInsightRecommendation(insight: ExpectedPostSessionInsight, expectedEvidenceSpecificCopy: RegExp): void {
+  assert.match(insight.recommendation, expectedEvidenceSpecificCopy, 'post-session coaching recommendation should name the concrete next behavior implied by the evidence');
+  assert.doesNotMatch(
+    insight.recommendation,
+    /\b(?:be careful|do better|keep going|try again|review the work|consider improving|reflect on the session|learn from this)\b/i,
+    'post-session coaching recommendation must not be a generic productivity tip',
+  );
+}
+
+function endedSessionAfterAlreadyComputedEvidence(events: LoopwatchEvent[], config: PivotNudgeConfig = {}): SessionConvergenceState {
+  const registry = createConvergenceWatcherRegistry();
+  const active = snapshot(events, {
+    ...config,
+    registry,
+    nowMs: baseMs + 12_000,
+    idleAfterMs: 5 * 60_000,
+    endedAfterMs: 30 * 60_000,
+  });
+  const activeSession = onlySession(active);
+  assert.equal(activeSession.liveness, 'active', 'setup first computes convergence evidence while the session is still active');
+  assert.ok(activeSession.evidence.length > 0, 'setup should have already-computed convergence evidence');
+
+  const ended = snapshot(events, {
+    ...config,
+    registry,
+    nowMs: baseMs + 45 * 60_000,
+    idleAfterMs: 5 * 60_000,
+    endedAfterMs: 30 * 60_000,
+  });
+  const endedSession = onlySession(ended);
+  assert.equal(endedSession.liveness, 'ended');
+  assert.deepEqual(
+    endedSession.evidence.map((item) => ({ eventId: item.eventId, signal: item.signal, detail: item.detail })),
+    activeSession.evidence.map((item) => ({ eventId: item.eventId, signal: item.signal, detail: item.detail })),
+    'post-session coaching must reuse already-computed convergence evidence instead of re-judging the ended session',
+  );
+  return endedSession;
 }
 
 function assertStatusWithEvidence(result: ConvergenceSnapshot, status: ConvergenceStatus, signal: ConvergenceSignal, eventId: string) {
@@ -484,6 +565,127 @@ await check('hard signals escalate cheap to strong for completion without eviden
     assertStatusWithEvidence(result, item.status, item.signal, item.eventId);
     assert.deepEqual(evidenceSignals(result), [item.signal], item.name);
   }
+});
+
+await check('ended sessions turn already-computed convergence evidence into a grounded post-session Coaching insight', () => {
+  const session = endedSessionAfterAlreadyComputedEvidence([
+    userMessage('post-session-goal', 0, 'Finish issue #16 with deterministic convergence checks.'),
+    validationResult('post-session-validation-fail', 3_000, 'pnpm convergence:check', 1, 'Expected postSessionInsight, received undefined.'),
+  ]);
+
+  const insight = assertInsightGroundsInEvidence(session);
+  assertConcreteInsightRecommendation(insight, /(?:pnpm convergence:check|failed validation|failing validation|failing test|acceptance check)/i);
+});
+
+await check('post-session insight recommendations are concrete and signal-specific', () => {
+  const cases: Array<{
+    name: string;
+    events: LoopwatchEvent[];
+    signal: ConvergenceSignal;
+    recommendation: RegExp;
+    config?: PivotNudgeConfig;
+  }> = [
+    {
+      name: 'repeated failing validation points at the failing check',
+      events: [
+        userMessage('post-session-churn-goal', 0, 'Make the convergence check pass without repair churn.'),
+        validationResult('post-session-churn-one', 2_000, 'pnpm convergence:check', 1, 'First failure.'),
+        validationResult('post-session-churn-two', 5_000, 'pnpm convergence:check', 1, 'Same failure again.'),
+      ],
+      signal: 'churn',
+      recommendation: /(?:pnpm convergence:check|failing check|repeated failure|repair loop|validation fails twice|different repair plan)/i,
+    },
+    {
+      name: 'completion without proof asks for validation evidence',
+      events: [
+        userMessage('post-session-proof-goal', 0, 'Ship issue #16 only with a validation receipt.'),
+        agentMessage('post-session-done-without-proof', 4_000, 'Done — issue #16 is complete and ready to ship.'),
+      ],
+      signal: 'completion_without_evidence',
+      recommendation: /(?:validation receipt|passing validation|proof|evidence|exact acceptance check)/i,
+    },
+    {
+      name: 'burn evidence asks for a budgeted reset instead of generic encouragement',
+      events: [
+        userMessage('post-session-burn-goal', 0, 'Keep the watcher affordable while checking convergence.'),
+        usage('post-session-burn-spike', 7_000, 42_000),
+      ],
+      signal: 'burn',
+      recommendation: /(?:token|budget|burn|summarize|reset|smaller loop|explicit stop condition|long run)/i,
+      config: { burnTokenThreshold: 10_000 },
+    },
+  ];
+  const recommendations = new Set<string>();
+
+  for (const item of cases) {
+    const session = endedSessionAfterAlreadyComputedEvidence(item.events, item.config);
+    const evidence = evidenceWithSignal(session, item.signal);
+    assert.equal(session.evidence[0]?.eventId, evidence.eventId, item.name);
+
+    const insight = assertInsightGroundsInEvidence(session);
+    assert.equal(insight.signal, item.signal, item.name);
+    assertConcreteInsightRecommendation(insight, item.recommendation);
+    recommendations.add(insight.recommendation);
+  }
+
+  assert.equal(recommendations.size, cases.length, 'post-session recommendations should vary with the convergence signal instead of sharing one generic tip');
+});
+
+await check('active and idle sessions do not receive post-session insights even when convergence evidence exists', () => {
+  const registry = createConvergenceWatcherRegistry();
+  const events = [
+    userMessage('post-session-active-goal', 0, 'Finish issue #16 with a focused convergence check.'),
+    validationResult('post-session-active-validation-fail', 3_000, 'pnpm convergence:check', 1, 'Post-session card is missing.'),
+  ];
+
+  const active = snapshot(events, {
+    registry,
+    nowMs: baseMs + 12_000,
+    idleAfterMs: 5 * 60_000,
+    endedAfterMs: 30 * 60_000,
+  });
+  const activeSession = onlySession(active);
+  assert.equal(activeSession.liveness, 'active');
+  evidenceWithSignal(activeSession, 'weak_validation');
+  assertNoPostSessionInsight(activeSession);
+
+  const idle = snapshot(events, {
+    registry,
+    nowMs: baseMs + 10 * 60_000,
+    idleAfterMs: 5 * 60_000,
+    endedAfterMs: 30 * 60_000,
+  });
+  const idleSession = onlySession(idle);
+  assert.equal(idleSession.liveness, 'idle');
+  evidenceWithSignal(idleSession, 'weak_validation');
+  assertNoPostSessionInsight(idleSession);
+});
+
+await check('ended sessions with no convergence evidence do not fabricate post-session insights', () => {
+  const registry = createConvergenceWatcherRegistry();
+  const events = [
+    userMessage('post-session-calm-goal', 0, 'Ship issue #16 after the targeted checks pass.'),
+    validationResult('post-session-calm-validation', 3_000, 'pnpm convergence:check', 0, 'All convergence checks passed.'),
+  ];
+
+  const active = snapshot(events, {
+    registry,
+    nowMs: baseMs + 12_000,
+    idleAfterMs: 5 * 60_000,
+    endedAfterMs: 30 * 60_000,
+  });
+  assert.deepEqual(onlySession(active).evidence, [], 'setup should stay calm while active');
+
+  const ended = snapshot(events, {
+    registry,
+    nowMs: baseMs + 45 * 60_000,
+    idleAfterMs: 5 * 60_000,
+    endedAfterMs: 30 * 60_000,
+  });
+  const endedSession = onlySession(ended);
+  assert.equal(endedSession.liveness, 'ended');
+  assert.deepEqual(endedSession.evidence, []);
+  assertNoPostSessionInsight(endedSession);
 });
 
 await check('per-session rate cap suppresses a second judge spend while still accepting new meaningful events', () => {

@@ -72,7 +72,7 @@ const baselineChecks: VerificationCheck[] = [
   {
     name: 'Convergence watcher contract',
     command: ['pnpm', 'convergence:check'],
-    issues: ['#8', '#14', '#15'],
+    issues: ['#8', '#14', '#15', '#16'],
     adrs: ['ADR-0002', 'ADR-0010', 'ADR-0011'],
     proves: [
       'active sessions infer and maintain a goal/done/validation/concerns summary',
@@ -81,6 +81,7 @@ const baselineChecks: VerificationCheck[] = [
       'opening prompts above the Loop confidence bar anchor a Loop and expose its stop condition',
       'anchored completion claims without stop-condition evidence raise weak-validation evidence',
       'mid-session user redirections produce Pivot fresh-session nudges without classifying agent Drift as Pivot',
+      'ended sessions turn convergence evidence into grounded post-session Coaching insights',
     ],
   },
   {

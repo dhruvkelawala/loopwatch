@@ -54,6 +54,18 @@ const PivotNudgeSchema = z.object({
   toGoal: z.string().min(1),
 });
 
+const PostSessionInsightSchema = z.object({
+  id: z.string().min(1),
+  sessionId: z.string().min(1),
+  createdAt: z.string().min(1),
+  source: z.literal('post_session'),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  recommendation: z.string().min(1),
+  evidenceEventIds: z.array(z.string().min(1)).min(1),
+  signal: z.enum(['drift', 'burn', 'weak_validation', 'churn', 'completion_without_evidence']),
+});
+
 
 const ConvergenceSessionSchema = z.object({
   id: z.string().min(1),
@@ -77,6 +89,7 @@ const ConvergenceSessionSchema = z.object({
   lastEventAt: z.string().min(1),
   loopAnchor: LoopAnchorSchema.optional(),
   pivotNudge: PivotNudgeSchema.optional(),
+  postSessionInsight: PostSessionInsightSchema.optional(),
 
 });
 
@@ -517,6 +530,145 @@ export const noActionInterventionCockpitEngineFixture = {
   runEvents: interventionCockpitEngineFixture.runEvents,
 } as const;
 
+export const postSessionInsightCockpitEngineFixture = {
+  health: {
+    ok: true,
+    service: 'loopwatch-post-session-fixture-engine',
+    target: 'playwright',
+  },
+  runs: {
+    ok: true,
+    runs: [
+      {
+        runId: 'run-post-session-insight',
+        workflowName: 'record-events',
+        status: 'completed',
+        startedAt: '2026-07-04T14:00:00.000Z',
+        endedAt: '2026-07-04T14:00:04.000Z',
+        durationMs: 4000,
+      },
+    ],
+    nextPollMs: 1000,
+  },
+  convergence: {
+    ok: true,
+    sessions: [
+      {
+        id: 'claude:post-session-insight-session',
+        source: 'claude',
+        sessionId: 'post-session-insight-session',
+        status: 'watch',
+        liveness: 'ended',
+        summary: {
+          goal: 'Ship issue #16 with deterministic post-session coaching insight tests.',
+          done: ['wired the issue #16 test fixture'],
+          validation: ['pnpm convergence:check exited 1'],
+          concerns: ['Validation failed before the session converged'],
+        },
+        evidence: [
+          {
+            eventId: 'post-session-validation-fail',
+            timestamp: '2026-07-04T14:00:03.000Z',
+            kind: 'tool_result',
+            severity: 'watch',
+            signal: 'weak_validation',
+            title: 'Validation failed before the session converged',
+            detail: 'pnpm convergence:check exited 1',
+          },
+        ],
+        postSessionInsight: {
+          id: 'post-session:claude:post-session-insight-session:post-session-validation-fail:weak_validation',
+          sessionId: 'post-session-insight-session',
+          createdAt: '2026-07-04T14:45:00.000Z',
+          source: 'post_session',
+          title: 'Post-session coaching: validation failed before convergence',
+          detail: 'Evidence post-session-validation-fail raised weak_validation after the ended session: pnpm convergence:check exited 1',
+          recommendation: 'Before marking the next slice done, run pnpm convergence:check until it passes and cite the failing validation receipt post-session-validation-fail.',
+          evidenceEventIds: ['post-session-validation-fail'],
+          signal: 'weak_validation',
+        },
+        judge: {
+          provider: 'deterministic-fake-v1',
+          lastTier: 'strong',
+          lastRunAt: '2026-07-04T14:00:04.000Z',
+          nextEligibleAt: '2026-07-04T14:01:04.000Z',
+          lastReason: 'weak_validation',
+          rateCapMs: 60_000,
+        },
+        spend: {
+          cheapCalls: 1,
+          strongCalls: 1,
+          totalCalls: 2,
+          estimatedTokens: 1_750,
+          estimatedCostUsd: 0.00147,
+        },
+        eventCount: 3,
+        meaningfulEventCount: 3,
+        lastEventAt: '2026-07-04T14:00:04.000Z',
+      },
+    ],
+    spend: {
+      cheapCalls: 1,
+      strongCalls: 1,
+      totalCalls: 2,
+      estimatedTokens: 1_750,
+      estimatedCostUsd: 0.00147,
+    },
+    nextPollMs: 2_000,
+  },
+  runEvents: [
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'post-session-insight-session',
+        timestamp: '2026-07-04T14:00:00.000Z',
+        kind: 'message',
+        actor: { type: 'user' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'issue-16-post-session' },
+        payload: { id: 'post-session-opening', text: 'Ship issue #16 with deterministic post-session coaching insight tests.' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'post-session-insight-session',
+        timestamp: '2026-07-04T14:00:02.000Z',
+        kind: 'tool_call',
+        actor: { type: 'agent' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'issue-16-post-session' },
+        payload: {
+          id: 'post-session-validation-call',
+          toolName: 'bash',
+          command: 'pnpm convergence:check',
+        },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'post-session-insight-session',
+        timestamp: '2026-07-04T14:00:03.000Z',
+        kind: 'tool_result',
+        actor: { type: 'tool' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'issue-16-post-session' },
+        payload: {
+          id: 'post-session-validation-fail',
+          toolName: 'bash',
+          command: 'pnpm convergence:check',
+          exitCode: 1,
+          output: 'pnpm convergence:check exited 1',
+        },
+      },
+    },
+  ],
+} as const;
+
 export function validateCockpitEngineFixture(): void {
   EngineHealthSchema.parse(cockpitEngineFixture.health);
   LoopwatchRunsResponseSchema.parse(cockpitEngineFixture.runs);
@@ -541,4 +693,9 @@ export function validateCockpitEngineFixture(): void {
   LoopwatchRunsResponseSchema.parse(noActionInterventionCockpitEngineFixture.runs);
   ConvergenceResponseSchema.parse(noActionInterventionCockpitEngineFixture.convergence);
   z.literal(1).parse(noActionInterventionCockpitEngineFixture.convergence.sessions.length);
+  EngineHealthSchema.parse(postSessionInsightCockpitEngineFixture.health);
+  LoopwatchRunsResponseSchema.parse(postSessionInsightCockpitEngineFixture.runs);
+  ConvergenceResponseSchema.parse(postSessionInsightCockpitEngineFixture.convergence);
+  z.literal(1).parse(postSessionInsightCockpitEngineFixture.convergence.sessions.length);
+  z.literal(3).parse(postSessionInsightCockpitEngineFixture.runEvents.length);
 }

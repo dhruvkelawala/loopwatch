@@ -52,6 +52,18 @@ export interface PivotNudge {
   toGoal: string;
 }
 
+export interface PostSessionInsight {
+  id: string;
+  sessionId: string;
+  createdAt: string;
+  source: 'post_session';
+  title: string;
+  detail: string;
+  recommendation: string;
+  evidenceEventIds: string[];
+  signal: ConvergenceSignal;
+}
+
 export interface ConvergenceSpend {
   cheapCalls: number;
   strongCalls: number;
@@ -85,6 +97,7 @@ export interface SessionConvergenceState {
   git?: GitEvidenceSnapshot;
   loopAnchor?: LoopAnchor;
   pivotNudge?: PivotNudge;
+  postSessionInsight?: PostSessionInsight;
 }
 
 export interface ConvergenceSnapshot {
@@ -117,6 +130,7 @@ interface ConvergenceWatcherMemory {
   status: ConvergenceStatus;
   evidence: ConvergenceEvidenceRef[];
   spend: ConvergenceSpend;
+  postSessionInsight?: PostSessionInsight;
 }
 
 export interface ConvergenceWatcherRegistry {
@@ -231,6 +245,12 @@ function buildSessionConvergence(
   registry.sessions.set(id, memory);
   const [source, sessionId] = splitSessionId(id, orderedEvents[0]);
   const git = latestGitSnapshot(orderedEvents);
+  if (liveness !== 'ended') {
+    memory.postSessionInsight = undefined;
+  } else {
+    memory.postSessionInsight ??= buildPostSessionInsight(sessionId, liveness, memory.evidence, summary, new Date(nowMs).toISOString());
+  }
+  const postSessionInsight = memory.postSessionInsight;
   return {
     id,
     source,
@@ -254,6 +274,7 @@ function buildSessionConvergence(
     ...(git ? { git } : {}),
     ...(loop ? { loopAnchor: loop } : {}),
     ...(pivotNudge ? { pivotNudge } : {}),
+    ...(postSessionInsight ? { postSessionInsight } : {}),
   };
 }
 
@@ -442,6 +463,64 @@ function normalizeEvidenceText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 }
 
+
+function buildPostSessionInsight(
+  sessionId: string,
+  liveness: ConvergenceLiveness,
+  evidence: ConvergenceEvidenceRef[],
+  summary: RunningSummary,
+  createdAt: string,
+): PostSessionInsight | undefined {
+  if (liveness !== 'ended' || evidence.length === 0) return undefined;
+  const selected = mostCoachableEvidence(evidence);
+  const advice = postSessionAdvice[selected.signal];
+  return {
+    id: `${sessionId}:post-session:${selected.eventId}:${selected.signal}`,
+    sessionId,
+    createdAt,
+    source: 'post_session',
+    title: advice.title,
+    detail: `${selected.title}: ${selected.detail}. Goal: ${compact(summary.goal, 140)}.`,
+    recommendation: advice.recommendation,
+    evidenceEventIds: evidence.map((item) => item.eventId),
+    signal: selected.signal,
+  };
+}
+
+function mostCoachableEvidence(evidence: ConvergenceEvidenceRef[]): ConvergenceEvidenceRef {
+  return [...evidence].sort((a, b) => signalCoachingRank[b.signal] - signalCoachingRank[a.signal])[0]!;
+}
+
+const signalCoachingRank: Record<ConvergenceSignal, number> = {
+  completion_without_evidence: 5,
+  weak_validation: 4,
+  churn: 3,
+  drift: 2,
+  burn: 1,
+};
+
+const postSessionAdvice: Record<ConvergenceSignal, { title: string; recommendation: string }> = {
+  completion_without_evidence: {
+    title: 'Next time, require validation before closing',
+    recommendation: 'Ask the agent to name and run the exact acceptance check, then cite the passing validation evidence before it claims the session is complete.',
+  },
+  weak_validation: {
+    title: 'Next time, make validation stronger upfront',
+    recommendation: 'Ask for a failing test or explicit acceptance check first, then require the agent to rerun that check before closing.',
+  },
+  churn: {
+    title: 'Next time, change repair strategy sooner',
+    recommendation: 'After the same validation fails twice, ask for the failure hypothesis and a different repair plan before more edits.',
+  },
+  drift: {
+    title: 'Next time, anchor the goal before continuing',
+    recommendation: 'Ask the agent to restate the current goal and acceptance criteria before it works on a new direction.',
+  },
+  burn: {
+    title: 'Next time, slice the work smaller',
+    recommendation: 'Split the task into a smaller loop with an explicit stop condition before spending another long run.',
+  },
+};
 function detectPivotNudge(events: LoopwatchEvent[], config: ConvergenceConfig, openingGoal: string): PivotNudge | undefined {
   const userMessages = events.filter((event) => event.kind === 'message' && event.actor.type === 'user' && !isToolResultMessage(event));
   if (userMessages.length < 2) return undefined;

@@ -5,6 +5,7 @@ import {
   cockpitEngineFixture,
   interventionCockpitEngineFixture,
   noActionInterventionCockpitEngineFixture,
+  postSessionInsightCockpitEngineFixture,
   pivotCockpitEngineFixture,
   securedCockpitEngineFixture,
 } from '../support/cockpit-fixture.js';
@@ -295,6 +296,21 @@ test('Intervention card exposes its evidence receipt and deep-links to the match
   await expect(inspector).toContainText('intervention-validation-churn');
   await expect(inspector).toContainText('churn');
   await expect(inspector).toContainText('pnpm convergence:check exited 1 after repeated repair attempts');
+});
+
+test('Cockpit renders post-session coaching as a Coaching Card separate from Intervention Cards', async ({ page }) => {
+  await routeCockpitFixture(page, postSessionInsightCockpitEngineFixture);
+
+  await page.goto('/');
+
+  const coachingCard = page.getByLabel('Post-session Coaching Card');
+  await expect(coachingCard).toBeVisible();
+  await expect(coachingCard).toContainText('Post-session coaching: validation failed before convergence');
+  await expect(coachingCard).toContainText('post-session-validation-fail');
+  await expect(coachingCard).toContainText('weak_validation');
+  await expect(coachingCard).toContainText('pnpm convergence:check exited 1');
+  await expect(coachingCard).toContainText('run pnpm convergence:check until it passes');
+  await expect(page.getByLabel('Intervention Card')).toHaveCount(0);
 });
 
 test('Pivot nudges default to a calm session marker and loud mode surfaces an interruptive Cockpit card', async ({ page }) => {

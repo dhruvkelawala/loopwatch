@@ -102,6 +102,19 @@ export const PivotNudgeSchema = z.object({
 });
 export type PivotNudge = z.infer<typeof PivotNudgeSchema>;
 
+export const PostSessionInsightSchema = z.object({
+  id: z.string().min(1),
+  sessionId: z.string().min(1),
+  createdAt: z.string().min(1),
+  source: z.literal('post_session'),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  recommendation: z.string().min(1),
+  evidenceEventIds: z.array(z.string().min(1)).min(1),
+  signal: z.enum(['drift', 'burn', 'weak_validation', 'churn', 'completion_without_evidence']),
+});
+export type PostSessionInsight = z.infer<typeof PostSessionInsightSchema>;
+
 export const GitEvidenceSnapshotSchema = z.object({
   repoRoot: z.string().min(1),
   repo: z.string().min(1),
@@ -152,6 +165,7 @@ export const SessionConvergenceSchema = z.object({
   git: GitEvidenceSnapshotSchema.optional(),
   loopAnchor: LoopAnchorSchema.optional(),
   pivotNudge: PivotNudgeSchema.optional(),
+  postSessionInsight: PostSessionInsightSchema.optional(),
 });
 export type SessionConvergence = z.infer<typeof SessionConvergenceSchema>;
 

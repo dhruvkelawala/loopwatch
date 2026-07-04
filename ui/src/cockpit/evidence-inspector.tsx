@@ -121,6 +121,15 @@ function convergenceRows(session: SessionView | undefined, convergenceState: Con
     );
   }
 
+  if (convergence.postSessionInsight) {
+    rows.splice(
+      2,
+      0,
+      { label: 'post-session', detail: convergence.postSessionInsight.title },
+      { label: 'coaching', detail: convergence.postSessionInsight.recommendation },
+    );
+  }
+
   return rows;
 }
 

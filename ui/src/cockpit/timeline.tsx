@@ -50,6 +50,7 @@ export function Timeline({
       </div>
 
       {session.convergence?.pivotNudge?.mode === 'loud' ? <PivotCoachingCard session={session} /> : null}
+      {session.convergence?.postSessionInsight ? <PostSessionCoachingCard session={session} /> : null}
       {interventionCard ? <InterventionCard card={interventionCard} onInspect={onInspectIntervention} onDismiss={onDismissIntervention} /> : null}
 
       <div className="px-5 pb-12 pt-3">
@@ -120,6 +121,30 @@ function PivotCoachingCard({ session }: { session: SessionView }) {
         <span>Receipt {pivot.eventId}</span>
         <span className="h-1 w-1 rounded-full bg-watch-line-2" />
         <span>{formatClock(pivot.timestamp)}</span>
+      </div>
+    </article>
+  );
+}
+
+function PostSessionCoachingCard({ session }: { session: SessionView }) {
+  const insight = session.convergence?.postSessionInsight;
+  if (!insight) return null;
+
+  return (
+    <article aria-label="Post-session Coaching Card" className="mx-5 mt-4 rounded-[14px] border border-severity-calm/28 bg-watch-card p-4 shadow-watch-card">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-[6px] bg-severity-calm/14 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[.12em] text-severity-calm">Coaching</span>
+        <h2 className="text-[13.5px] font-semibold text-watch-ink">{insight.title}</h2>
+        <span className="ml-auto rounded-[6px] border border-watch-line bg-watch-code px-2 py-1 font-mono text-[10px] uppercase text-watch-ink-3">post-session</span>
+      </div>
+      <p className="mt-3 text-[12.5px] leading-[1.65] text-watch-ink-2">{insight.detail}</p>
+      <p className="mt-3 rounded-[10px] border border-watch-line bg-watch-bg-deep px-3 py-2 font-mono text-[11px] leading-[1.6] text-watch-ink">{insight.recommendation}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-watch-ink-3">
+        <span>Signal {insight.signal.replaceAll('_', ' ')}</span>
+        <span className="h-1 w-1 rounded-full bg-watch-line-2" />
+        <span>{insight.evidenceEventIds.length} evidence receipts</span>
+        <span className="h-1 w-1 rounded-full bg-watch-line-2" />
+        <span>{formatClock(insight.createdAt)}</span>
       </div>
     </article>
   );

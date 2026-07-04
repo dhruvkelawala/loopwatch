@@ -114,10 +114,22 @@ function convergenceItems(convergence: SessionConvergence): TimelineItem[] {
         },
       ]
     : [];
+  const insightItem = convergence.postSessionInsight
+    ? [
+        {
+          id: `${convergence.id}:post-session:${convergence.postSessionInsight.signal}`,
+          at: convergence.postSessionInsight.createdAt,
+          label: 'Post-session coaching',
+          tone: 'neutral' as const,
+          detail: convergence.postSessionInsight.recommendation,
+        },
+      ]
+    : [];
 
   if (convergence.evidence.length === 0) {
     return [
       ...pivotItem,
+      ...insightItem,
       {
         id: `${convergence.id}:convergence:calm`,
         at: convergence.judge.lastRunAt ?? convergence.lastEventAt,
@@ -130,6 +142,7 @@ function convergenceItems(convergence: SessionConvergence): TimelineItem[] {
 
   return [
     ...pivotItem,
+    ...insightItem,
     ...convergence.evidence.map((evidence) => ({
       id: `${convergence.id}:convergence:${evidence.eventId}:${evidence.signal}`,
       at: evidence.timestamp,
