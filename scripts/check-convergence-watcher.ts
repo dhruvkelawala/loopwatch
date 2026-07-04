@@ -97,6 +97,27 @@ type LoopAnchoringConfig = ConvergenceConfig & {
   };
 };
 
+type PivotNudgeConfig = LoopAnchoringConfig & {
+  pivotMode?: 'calm' | 'loud';
+};
+type ExpectedPivotNudge = {
+  id: string;
+  eventId: string;
+  timestamp: string;
+  mode: 'calm' | 'loud';
+  source: 'user_redirection';
+  title: string;
+  detail: string;
+  recommendedAction: string;
+  fromGoal: string;
+  toGoal: string;
+};
+
+type SessionWithPivotNudge = SessionConvergenceState & {
+  pivotNudge?: ExpectedPivotNudge;
+};
+
+
 function loopById(loops: Loop[], id: string): Loop {
   const loop = loops.find((candidate) => candidate.id === id);
   assert.ok(loop, `expected loop ${id} to exist in the fixture library`);
@@ -128,7 +149,7 @@ function loopAnchoringConfig(loops: Loop[] = STARTER_LOOPS): LoopAnchoringConfig
   };
 }
 
-function snapshot(events: LoopwatchEvent[], config: LoopAnchoringConfig = {}): ConvergenceSnapshot {
+function snapshot(events: LoopwatchEvent[], config: PivotNudgeConfig = {}): ConvergenceSnapshot {
   return buildConvergenceSnapshot(events, {
     nowMs: baseMs + 12_000,
     minJudgeIntervalMs: 60_000,
@@ -173,6 +194,28 @@ function evidenceWithSignal(session: SessionConvergenceState, signal: Convergenc
   const evidence = session.evidence.find((item) => item.signal === signal);
   assert.ok(evidence, `expected convergence evidence with signal ${signal}`);
   return evidence;
+}
+
+function assertNoEvidenceSignal(session: SessionConvergenceState, signal: ConvergenceSignal): void {
+  assert.equal(session.evidence.some((item) => item.signal === signal), false, `did not expect convergence evidence with signal ${signal}`);
+}
+
+function pivotNudgeFor(session: SessionConvergenceState): ExpectedPivotNudge {
+  const nudge = (session as SessionWithPivotNudge).pivotNudge;
+  assert.ok(nudge, 'expected session.pivotNudge for a user-initiated topic change');
+  return nudge;
+}
+
+function assertNoPivotNudge(session: SessionConvergenceState): void {
+  assert.equal((session as SessionWithPivotNudge).pivotNudge, undefined, 'did not expect a Pivot nudge');
+}
+
+function assertFreshSessionRecommendation(nudge: ExpectedPivotNudge): void {
+  const record = nudge as Record<string, unknown>;
+  assert.match(nudge.recommendedAction, /start a fresh (?:agent )?session/i, 'Pivot nudge recommends starting a fresh session');
+  assert.equal('startedSessionId' in record, false, 'Pivot nudge must not report that Loopwatch started a session');
+  assert.equal('createdSessionId' in record, false, 'Pivot nudge must not report that Loopwatch created a session');
+  assert.equal('controlledSessionId' in record, false, 'Pivot nudge must not claim control of a session');
 }
 
 function assertStatusWithEvidence(result: ConvergenceSnapshot, status: ConvergenceStatus, signal: ConvergenceSignal, eventId: string) {
@@ -317,6 +360,76 @@ await check('semantic-only stop conditions use judge/diff evidence without exact
   assert.equal(session.status, 'calm');
   assert.deepEqual(session.evidence, []);
   assert.equal(session.judge.lastTier, 'cheap', 'semantic-only stop conditions should not create a false positive that escalates to strong judge');
+});
+
+await check('mid-session user topic change creates a calm Pivot nudge by default without classifying it as Drift', () => {
+  const result = snapshot([
+    userMessage('pivot-goal', 0, 'Ship issue #15 Pivot detection with deterministic convergence and Cockpit tests.'),
+    toolCall('pivot-edit', 1_000, 'edit', 'edit src/convergence.ts'),
+    validationResult('pivot-validation', 3_000, 'pnpm convergence:check', 0, 'Existing convergence checks passed before the topic changed.'),
+    agentMessage('pivot-progress', 4_000, 'Pivot detection tests are in progress and the convergence watcher still passes.'),
+    userMessage('pivot-redirection', 7_000, 'Actually, switch topics: help me draft an onboarding email campaign for new workspace admins.'),
+  ]);
+
+  const session = onlySession(result);
+  assert.equal(session.status, 'calm', 'default Pivot mode is calm/non-interruptive');
+  assertNoEvidenceSignal(session, 'drift');
+  const nudge = pivotNudgeFor(session);
+  assert.equal(nudge.eventId, 'pivot-redirection');
+  assert.equal(nudge.mode, 'calm');
+  assert.equal(nudge.source, 'user_redirection');
+  assert.match(nudge.title, /pivot/i);
+  assert.match(nudge.fromGoal, /issue #15 Pivot detection/);
+  assert.match(nudge.toGoal, /onboarding email campaign/);
+  assertFreshSessionRecommendation(nudge);
+  assert.equal(session.spend.strongCalls, 0, 'calm Pivot nudges remain cheap/non-interruptive by default');
+});
+
+await check('Pivot loud mode marks the same user redirection as a loud fresh-session nudge', () => {
+  const result = snapshot(
+    [
+      userMessage('pivot-loud-goal', 0, 'Complete the Loopwatch Pivot detector tests and wire the Cockpit nudge.'),
+      toolCall('pivot-loud-edit', 1_000, 'edit', 'edit tests/e2e/cockpit.spec.ts'),
+      agentMessage('pivot-loud-progress', 3_000, 'The Pivot detector test fixture is being added.'),
+      userMessage('pivot-loud-redirection', 6_000, 'New task instead: analyze renewal-risk accounts and draft a customer success playbook.'),
+    ],
+    { pivotMode: 'loud' },
+  );
+
+  const session = onlySession(result);
+  assertNoEvidenceSignal(session, 'drift');
+  const nudge = pivotNudgeFor(session);
+  assert.equal(nudge.eventId, 'pivot-loud-redirection');
+  assert.equal(nudge.mode, 'loud');
+  assert.match(nudge.toGoal, /renewal-risk accounts/);
+  assertFreshSessionRecommendation(nudge);
+});
+
+await check('agent drift remains a Drift signal and never becomes a user Pivot', () => {
+  const result = snapshot([
+    userMessage('drift-goal', 0, 'Finish Pivot detection and the fresh-session nudge.'),
+    toolCall('drift-edit', 1_000, 'edit', 'edit src/convergence.ts'),
+    agentMessage('agent-drift', 4_000, 'Instead of Pivot detection, I am going to refactor unrelated billing settings first.'),
+  ]);
+
+  const session = onlySession(result);
+  assertNoPivotNudge(session);
+  const drift = evidenceWithSignal(session, 'drift');
+  assert.equal(drift.eventId, 'agent-drift');
+  assert.equal(drift.severity, 'intervention');
+});
+
+await check('a single benign refinement of the same task does not create a Pivot nudge', () => {
+  const result = snapshot([
+    userMessage('clarification-goal', 0, 'Add Pivot detection and keep Loopwatch from starting sessions automatically.'),
+    toolCall('clarification-edit', 1_000, 'edit', 'edit scripts/check-convergence-watcher.ts'),
+    userMessage('clarification-refinement', 4_000, 'Clarification: keep the default mode calm, and only show a loud card when the user toggles it on.'),
+  ]);
+
+  const session = onlySession(result);
+  assert.equal(session.status, 'calm');
+  assert.deepEqual(session.evidence, []);
+  assertNoPivotNudge(session);
 });
 
 await check('failed validation flips the session to watch and references the failing validation event', () => {

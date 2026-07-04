@@ -103,8 +103,21 @@ function withConvergenceLane(lanes: TimelineLane[], convergence: SessionConverge
 }
 
 function convergenceItems(convergence: SessionConvergence): TimelineItem[] {
+  const pivotItem = convergence.pivotNudge
+    ? [
+        {
+          id: `${convergence.id}:pivot:${convergence.pivotNudge.eventId}`,
+          at: convergence.pivotNudge.timestamp,
+          label: convergence.pivotNudge.mode === 'loud' ? 'Pivot nudge' : 'Pivot noted',
+          tone: convergence.pivotNudge.mode === 'loud' ? ('watch' as const) : ('neutral' as const),
+          detail: convergence.pivotNudge.recommendedAction,
+        },
+      ]
+    : [];
+
   if (convergence.evidence.length === 0) {
     return [
+      ...pivotItem,
       {
         id: `${convergence.id}:convergence:calm`,
         at: convergence.judge.lastRunAt ?? convergence.lastEventAt,
@@ -115,13 +128,16 @@ function convergenceItems(convergence: SessionConvergence): TimelineItem[] {
     ];
   }
 
-  return convergence.evidence.map((evidence) => ({
-    id: `${convergence.id}:convergence:${evidence.eventId}:${evidence.signal}`,
-    at: evidence.timestamp,
-    label: evidence.title,
-    tone: evidence.severity,
-    detail: evidence.detail,
-  }));
+  return [
+    ...pivotItem,
+    ...convergence.evidence.map((evidence) => ({
+      id: `${convergence.id}:convergence:${evidence.eventId}:${evidence.signal}`,
+      at: evidence.timestamp,
+      label: evidence.title,
+      tone: evidence.severity,
+      detail: evidence.detail,
+    })),
+  ];
 }
 
 function sessionIdFromLocation(): string {

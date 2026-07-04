@@ -5,6 +5,7 @@ import {
   cockpitEngineFixture,
   interventionCockpitEngineFixture,
   noActionInterventionCockpitEngineFixture,
+  pivotCockpitEngineFixture,
   securedCockpitEngineFixture,
 } from '../support/cockpit-fixture.js';
 
@@ -15,6 +16,12 @@ type CockpitFixture = {
   loopRecommendation?: unknown;
   runEvents?: readonly unknown[];
 };
+
+type PivotMode = 'calm' | 'loud';
+type PivotNudge = { mode: PivotMode };
+type PivotSession = { pivotNudge?: PivotNudge };
+type PivotConvergenceResponse = { sessions?: readonly PivotSession[] };
+
 
 const securedDeepLinkSession = securedCockpitEngineFixture.convergence.sessions[0];
 const interventionDeepLinkSession = interventionCockpitEngineFixture.convergence.sessions[0];
@@ -91,9 +98,11 @@ async function routeCockpitFixture(page: Page, fixture: CockpitFixture, routed: 
     routed.push('/api/loopwatch/runs');
     await route.fulfill({ json: fixture.runs });
   });
-  await page.route('**/api/loopwatch/convergence', async (route) => {
-    routed.push('/api/loopwatch/convergence');
-    await route.fulfill({ json: fixture.convergence });
+  await page.route(/\/api\/loopwatch\/convergence(?:\?.*)?$/, async (route) => {
+    const url = new URL(route.request().url());
+    const pivotMode = url.searchParams.get('pivotMode') === 'loud' ? 'loud' : 'calm';
+    routed.push(`/api/loopwatch/convergence${url.search}`);
+    await route.fulfill({ json: convergenceWithPivotMode(fixture.convergence, pivotMode) });
   });
   await page.route('**/api/loopwatch/loops/recommend**', async (route) => {
     routed.push('/api/loopwatch/loops/recommend');
@@ -113,6 +122,26 @@ async function routeCockpitFixture(page: Page, fixture: CockpitFixture, routed: 
     });
   }
   return routed;
+}
+
+function convergenceWithPivotMode(convergence: unknown, mode: PivotMode): unknown {
+  if (!convergence || typeof convergence !== 'object' || Array.isArray(convergence)) return convergence;
+  const response = convergence as PivotConvergenceResponse;
+  if (!response.sessions) return convergence;
+
+  return {
+    ...response,
+    sessions: response.sessions.map((session) => {
+      if (!session.pivotNudge) return session;
+      return {
+        ...session,
+        pivotNudge: {
+          ...session.pivotNudge,
+          mode,
+        },
+      };
+    }),
+  };
 }
 
 test('loopwatch:focus-session selects the matching existing Cockpit session', async ({ page }) => {
@@ -162,7 +191,7 @@ test('Cockpit renders against mocked engine endpoints without Tauri', async ({ p
     routed.push('/api/loopwatch/runs');
     await route.fulfill({ json: cockpitEngineFixture.runs });
   });
-  await page.route('**/api/loopwatch/convergence', async (route) => {
+  await page.route(/\/api\/loopwatch\/convergence(?:\?.*)?$/, async (route) => {
     routed.push('/api/loopwatch/convergence');
     await route.fulfill({ json: cockpitEngineFixture.convergence });
   });
@@ -199,7 +228,7 @@ test('Cockpit sends the runtime bearer token on direct engine fetches and displa
     securedRequests.push({ path: '/api/loopwatch/runs', authorization: route.request().headers().authorization ?? null });
     await route.fulfill({ json: securedCockpitEngineFixture.runs });
   });
-  await page.route('**/api/loopwatch/convergence', async (route) => {
+  await page.route(/\/api\/loopwatch\/convergence(?:\?.*)?$/, async (route) => {
     securedRequests.push({ path: '/api/loopwatch/convergence', authorization: route.request().headers().authorization ?? null });
     await route.fulfill({ json: securedCockpitEngineFixture.convergence });
   });
@@ -268,6 +297,33 @@ test('Intervention card exposes its evidence receipt and deep-links to the match
   await expect(inspector).toContainText('pnpm convergence:check exited 1 after repeated repair attempts');
 });
 
+test('Pivot nudges default to a calm session marker and loud mode surfaces an interruptive Cockpit card', async ({ page }) => {
+  const routed: string[] = [];
+  await routeCockpitFixture(page, pivotCockpitEngineFixture, routed);
+
+  await page.goto('/');
+
+  await expect(page.getByText('Ship issue #15 Pivot detection with a fresh-session nudge.').first()).toBeVisible();
+  await expect(page.getByText('User pivot detected').first()).toBeVisible();
+  await expect(page.getByText('Start a fresh session for the onboarding email campaign.').first()).toBeVisible();
+  await expect(page.getByLabel('Intervention Card')).toHaveCount(0);
+  await expect(page.getByLabel('Pivot Coaching Card')).toHaveCount(0);
+
+  const loudToggle = page.getByRole('button', { name: 'Toggle Pivot nudge mode' });
+  await expect(loudToggle).toContainText('Pivot calm');
+
+  await loudToggle.click();
+
+  await expect(loudToggle).toContainText('Pivot loud');
+  await expect.poll(() => routed.includes('/api/loopwatch/convergence?pivotMode=loud')).toBe(true);
+
+  const pivotCard = page.getByLabel('Pivot Coaching Card');
+  await expect(pivotCard).toBeVisible();
+  await expect(pivotCard).toContainText('User pivot detected');
+  await expect(pivotCard).toContainText('Start a fresh session for the onboarding email campaign.');
+  await expect(pivotCard).toContainText('Loopwatch will not create, control, or start one for you.');
+});
+
 test('Dismissing an intervention card suppresses only that evidence key during the page session', async ({ page }) => {
   const routed: string[] = [];
   const fastPollingFixture = {
@@ -294,7 +350,7 @@ test('Dismissing an intervention card suppresses only that evidence key during t
   await expect(interventionCard).not.toContainText('Pause the repair loop, isolate the failing check, and land the smallest change that makes it pass.');
   await expect(interventionCard).toContainText('Completion claim lacks validation evidence');
   await expect(interventionCard).toContainText('Request the missing validation receipt before accepting the completion claim.');
-  await expect.poll(() => routed.filter((path) => path === '/api/loopwatch/convergence').length).toBeGreaterThan(1);
+  await expect.poll(() => routed.filter((path) => path.startsWith('/api/loopwatch/convergence')).length).toBeGreaterThan(1);
   await expect(interventionCard).toContainText('Completion claim lacks validation evidence');
   await expect(interventionCard).not.toContainText('Validation repair is churning');
 });

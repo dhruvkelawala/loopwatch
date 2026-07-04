@@ -88,6 +88,20 @@ export const LoopAnchorSchema = z.object({
 });
 export type LoopAnchor = z.infer<typeof LoopAnchorSchema>;
 
+export const PivotNudgeSchema = z.object({
+  id: z.string().min(1),
+  eventId: z.string().min(1),
+  timestamp: z.string(),
+  mode: z.enum(['calm', 'loud']),
+  source: z.literal('user_redirection'),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  recommendedAction: z.string().min(1),
+  fromGoal: z.string().min(1),
+  toGoal: z.string().min(1),
+});
+export type PivotNudge = z.infer<typeof PivotNudgeSchema>;
+
 export const GitEvidenceSnapshotSchema = z.object({
   repoRoot: z.string().min(1),
   repo: z.string().min(1),
@@ -137,6 +151,7 @@ export const SessionConvergenceSchema = z.object({
   lastEventAt: z.string(),
   git: GitEvidenceSnapshotSchema.optional(),
   loopAnchor: LoopAnchorSchema.optional(),
+  pivotNudge: PivotNudgeSchema.optional(),
 });
 export type SessionConvergence = z.infer<typeof SessionConvergenceSchema>;
 

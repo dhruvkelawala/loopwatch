@@ -41,6 +41,20 @@ const ConvergenceEvidenceSchema = z.object({
   recommendedAction: z.string().min(1).optional(),
 });
 
+const PivotNudgeSchema = z.object({
+  id: z.string().min(1),
+  eventId: z.string().min(1),
+  timestamp: z.string().min(1),
+  mode: z.enum(['calm', 'loud']),
+  source: z.literal('user_redirection'),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  recommendedAction: z.string().min(1),
+  fromGoal: z.string().min(1),
+  toGoal: z.string().min(1),
+});
+
+
 const ConvergenceSessionSchema = z.object({
   id: z.string().min(1),
   source: z.string().min(1),
@@ -62,6 +76,8 @@ const ConvergenceSessionSchema = z.object({
   meaningfulEventCount: z.number().int().nonnegative(),
   lastEventAt: z.string().min(1),
   loopAnchor: LoopAnchorSchema.optional(),
+  pivotNudge: PivotNudgeSchema.optional(),
+
 });
 
 const ConvergenceResponseSchema = z.object({
@@ -343,6 +359,139 @@ export const interventionCockpitEngineFixture = {
   ],
 } as const;
 
+export const pivotCockpitEngineFixture = {
+  health: {
+    ok: true,
+    service: 'loopwatch-pivot-fixture-engine',
+    target: 'playwright',
+  },
+  runs: {
+    ok: true,
+    runs: [
+      {
+        runId: 'run-pivot-nudge',
+        workflowName: 'record-events',
+        status: 'completed',
+        startedAt: '2026-07-04T14:00:00.000Z',
+        endedAt: '2026-07-04T14:00:07.000Z',
+        durationMs: 7000,
+      },
+    ],
+    nextPollMs: 1000,
+  },
+  convergence: {
+    ok: true,
+    sessions: [
+      {
+        id: 'claude:cockpit-pivot-session',
+        source: 'claude',
+        sessionId: 'cockpit-pivot-session',
+        status: 'calm',
+        liveness: 'active',
+        summary: {
+          goal: 'Ship issue #15 Pivot detection with a fresh-session nudge.',
+          done: ['added deterministic Pivot detector coverage'],
+          validation: ['pnpm convergence:check exited 0'],
+          concerns: [],
+        },
+        evidence: [],
+        pivotNudge: {
+          id: 'pivot-nudge-cockpit-redirection',
+          eventId: 'pivot-cockpit-redirection',
+          timestamp: '2026-07-04T14:00:06.000Z',
+          mode: 'calm',
+          source: 'user_redirection',
+          title: 'User pivot detected',
+          detail: 'The user switched from Loopwatch Pivot detection to an onboarding email campaign after prior work was already underway.',
+          recommendedAction: 'Start a fresh session for the onboarding email campaign. Loopwatch will not create, control, or start one for you.',
+          fromGoal: 'Ship issue #15 Pivot detection with a fresh-session nudge.',
+          toGoal: 'Draft an onboarding email campaign for new workspace admins.',
+        },
+        judge: {
+          provider: 'deterministic-fake-v1',
+          lastTier: 'cheap',
+          lastRunAt: '2026-07-04T14:00:07.000Z',
+          nextEligibleAt: '2026-07-04T14:01:07.000Z',
+          lastReason: 'pivot',
+          rateCapMs: 60_000,
+        },
+        spend: {
+          cheapCalls: 1,
+          strongCalls: 0,
+          totalCalls: 1,
+          estimatedTokens: 350,
+          estimatedCostUsd: 0.00007,
+        },
+        eventCount: 4,
+        meaningfulEventCount: 4,
+        lastEventAt: '2026-07-04T14:00:06.000Z',
+      },
+    ],
+    spend: {
+      cheapCalls: 1,
+      strongCalls: 0,
+      totalCalls: 1,
+      estimatedTokens: 350,
+      estimatedCostUsd: 0.00007,
+    },
+    nextPollMs: 2_000,
+  },
+  runEvents: [
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'cockpit-pivot-session',
+        timestamp: '2026-07-04T14:00:00.000Z',
+        kind: 'message',
+        actor: { type: 'user' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'slice-13-pivot' },
+        payload: { id: 'pivot-cockpit-goal', text: 'Ship issue #15 Pivot detection with a fresh-session nudge.' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'cockpit-pivot-session',
+        timestamp: '2026-07-04T14:00:02.000Z',
+        kind: 'tool_call',
+        actor: { type: 'agent', name: 'edit' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'slice-13-pivot' },
+        payload: { id: 'pivot-cockpit-edit', toolName: 'edit', command: 'edit scripts/check-convergence-watcher.ts' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'cockpit-pivot-session',
+        timestamp: '2026-07-04T14:00:04.000Z',
+        kind: 'message',
+        actor: { type: 'agent' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'slice-13-pivot' },
+        payload: { id: 'pivot-cockpit-progress', text: 'The Pivot detection tests are in progress.' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'cockpit-pivot-session',
+        timestamp: '2026-07-04T14:00:06.000Z',
+        kind: 'message',
+        actor: { type: 'user' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'slice-13-pivot' },
+        payload: { id: 'pivot-cockpit-redirection', text: 'Actually, switch topics: draft an onboarding email campaign for new workspace admins.' },
+      },
+    },
+  ],
+} as const;
+
 export const noActionInterventionCockpitEngineFixture = {
   health: interventionCockpitEngineFixture.health,
   runs: interventionCockpitEngineFixture.runs,
@@ -383,6 +532,11 @@ export function validateCockpitEngineFixture(): void {
   ConvergenceResponseSchema.parse(interventionCockpitEngineFixture.convergence);
   z.literal(1).parse(interventionCockpitEngineFixture.convergence.sessions.length);
   z.literal(3).parse(interventionCockpitEngineFixture.runEvents.length);
+  EngineHealthSchema.parse(pivotCockpitEngineFixture.health);
+  LoopwatchRunsResponseSchema.parse(pivotCockpitEngineFixture.runs);
+  ConvergenceResponseSchema.parse(pivotCockpitEngineFixture.convergence);
+  z.literal(1).parse(pivotCockpitEngineFixture.convergence.sessions.length);
+  z.literal(4).parse(pivotCockpitEngineFixture.runEvents.length);
   EngineHealthSchema.parse(noActionInterventionCockpitEngineFixture.health);
   LoopwatchRunsResponseSchema.parse(noActionInterventionCockpitEngineFixture.runs);
   ConvergenceResponseSchema.parse(noActionInterventionCockpitEngineFixture.convergence);

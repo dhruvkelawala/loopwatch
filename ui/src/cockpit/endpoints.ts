@@ -8,9 +8,11 @@ export function loopwatchRunsEndpoint(baseUrl: string): string {
   return `${base}/loopwatch/runs?limit=120`;
 }
 
-export function loopwatchConvergenceEndpoint(baseUrl: string): string {
+export function loopwatchConvergenceEndpoint(baseUrl: string, pivotMode?: 'calm' | 'loud'): string {
   const base = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-  return `${base}/loopwatch/convergence`;
+  if (!pivotMode) return `${base}/loopwatch/convergence`;
+  const params = new URLSearchParams({ pivotMode });
+  return `${base}/loopwatch/convergence?${params.toString()}`;
 }
 
 export function loopwatchLoopRecommendationEndpoint(baseUrl: string, task: string): string {

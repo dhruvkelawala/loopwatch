@@ -6,6 +6,7 @@ export type ConvergenceStatus = 'calm' | 'watch' | 'intervention';
 export type ConvergenceLiveness = 'active' | 'idle' | 'ended';
 export type JudgeTier = 'cheap' | 'strong';
 export type ConvergenceSignal = 'drift' | 'burn' | 'weak_validation' | 'churn' | 'completion_without_evidence';
+export type PivotMode = 'calm' | 'loud';
 
 export interface ConvergenceEvidenceRef {
   eventId: string;
@@ -36,6 +37,19 @@ export interface LoopAnchor {
     evidence: string;
     observable: boolean;
   };
+}
+
+export interface PivotNudge {
+  id: string;
+  eventId: string;
+  timestamp: string;
+  mode: PivotMode;
+  source: 'user_redirection';
+  title: string;
+  detail: string;
+  recommendedAction: string;
+  fromGoal: string;
+  toGoal: string;
 }
 
 export interface ConvergenceSpend {
@@ -70,6 +84,7 @@ export interface SessionConvergenceState {
   lastEventAt: string;
   git?: GitEvidenceSnapshot;
   loopAnchor?: LoopAnchor;
+  pivotNudge?: PivotNudge;
 }
 
 export interface ConvergenceSnapshot {
@@ -91,6 +106,7 @@ export interface ConvergenceConfig {
     loops?: Loop[];
     confidenceThreshold?: number;
   };
+  pivotMode?: PivotMode;
 }
 
 interface ConvergenceWatcherMemory {
@@ -161,12 +177,13 @@ export function buildConvergenceSnapshot(events: LoopwatchEvent[], config: Conve
   };
 }
 
-export function convergenceConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Pick<ConvergenceConfig, 'minJudgeIntervalMs' | 'idleAfterMs' | 'endedAfterMs' | 'burnTokenThreshold'> {
+export function convergenceConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Pick<ConvergenceConfig, 'minJudgeIntervalMs' | 'idleAfterMs' | 'endedAfterMs' | 'burnTokenThreshold' | 'pivotMode'> {
   return {
     minJudgeIntervalMs: positiveIntEnv(env.LOOPWATCH_CONVERGENCE_MIN_JUDGE_INTERVAL_MS),
     idleAfterMs: positiveIntEnv(env.LOOPWATCH_CONVERGENCE_IDLE_AFTER_MS),
     endedAfterMs: positiveIntEnv(env.LOOPWATCH_CONVERGENCE_ENDED_AFTER_MS),
     burnTokenThreshold: positiveIntEnv(env.LOOPWATCH_CONVERGENCE_BURN_TOKENS),
+    pivotMode: pivotModeFromEnv(env.LOOPWATCH_PIVOT_MODE),
   };
 }
 
@@ -180,8 +197,10 @@ function buildSessionConvergence(
 ): SessionConvergenceState {
   const orderedEvents = [...events].sort(compareEvents);
   const meaningfulEvents = orderedEvents.filter(isMeaningfulEvent);
-  const summary = summarizeSession(orderedEvents);
-  const loop = detectSessionLoop(orderedEvents, config);
+  const baseSummary = summarizeSession(orderedEvents);
+  const pivotNudge = detectPivotNudge(orderedEvents, config, baseSummary.goal);
+  const summary = pivotNudge ? { ...baseSummary, goal: pivotNudge.toGoal } : baseSummary;
+  const loop = pivotNudge ? undefined : detectSessionLoop(orderedEvents, config);
   const liveness = livenessForEvent(orderedEvents.at(-1), nowMs, config);
   const memory = activeOrRetiredMemory(registry, id);
   const meaningfulCursor = meaningfulEvents.map(eventId).join('|');
@@ -234,6 +253,7 @@ function buildSessionConvergence(
     lastEventAt: orderedEvents.at(-1)?.timestamp ?? '',
     ...(git ? { git } : {}),
     ...(loop ? { loopAnchor: loop } : {}),
+    ...(pivotNudge ? { pivotNudge } : {}),
   };
 }
 
@@ -420,6 +440,74 @@ function significantTerms(value: string): string[] {
 
 function normalizeEvidenceText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function detectPivotNudge(events: LoopwatchEvent[], config: ConvergenceConfig, openingGoal: string): PivotNudge | undefined {
+  const userMessages = events.filter((event) => event.kind === 'message' && event.actor.type === 'user' && !isToolResultMessage(event));
+  if (userMessages.length < 2) return undefined;
+
+  const opening = userMessages[0]!;
+  for (const candidate of userMessages.slice(1)) {
+    const text = textFromEvent(candidate);
+    if (!text) continue;
+    if (!hasPriorAgentWork(events, candidate)) continue;
+    if (!isPivotRedirection(text, textFromEvent(opening) ?? openingGoal)) continue;
+
+    const toGoal = compact(text, 220);
+    return {
+      id: `pivot:${eventId(candidate)}`,
+      eventId: eventId(candidate),
+      timestamp: candidate.timestamp,
+      mode: config.pivotMode ?? 'calm',
+      source: 'user_redirection',
+      title: 'Pivot detected — consider a fresh session',
+      detail: `The user changed the active goal from "${compact(openingGoal, 110)}" to "${compact(toGoal, 130)}".`,
+      recommendedAction: 'Start a fresh agent session for the new goal; Loopwatch will keep observing this session if you continue here.',
+      fromGoal: openingGoal,
+      toGoal,
+    };
+  }
+
+  return undefined;
+}
+
+function hasPriorAgentWork(events: LoopwatchEvent[], pivotEvent: LoopwatchEvent): boolean {
+  const pivotAt = Date.parse(pivotEvent.timestamp);
+  return events.some((event) => {
+    if (Date.parse(event.timestamp) >= pivotAt) return false;
+    if (event.kind === 'tool_call' || event.kind === 'tool_result') return true;
+    return event.kind === 'message' && event.actor.type === 'agent';
+  });
+}
+
+function isPivotRedirection(text: string, openingGoal: string): boolean {
+  const normalized = text.toLowerCase();
+  if (benignClarificationPattern.test(normalized)) return false;
+  const hasPivotMarker = pivotPattern.test(normalized);
+  if (!hasPivotMarker) return false;
+  return topicOverlap(text, openingGoal) < 0.45 || explicitFreshTopicPattern.test(normalized);
+}
+
+const pivotPattern = /\b(actually|instead|new task|different task|change(?:ing)? (?:the )?(?:topic|goal|plan)|switch(?:ing)? to|pivot(?:ing)? to|forget (?:that|the previous)|start over|new goal|separate task|now (?:let'?s|please|can you))\b/i;
+const explicitFreshTopicPattern = /\b(new task|different task|separate task|new goal|switch(?:ing)? to|pivot(?:ing)? to|forget (?:that|the previous)|start over)\b/i;
+const benignClarificationPattern = /\b(to clarify|clarification|what i meant|i mean|same task|same goal|small tweak|minor tweak|one more detail|acceptance criteri(?:a|on)|could you explain|can you explain|why did|what does)\b/i;
+
+function topicOverlap(nextGoal: string, openingGoal: string): number {
+  const nextTokens = new Set(topicTokens(nextGoal));
+  const openingTokens = new Set(topicTokens(openingGoal));
+  if (nextTokens.size === 0 || openingTokens.size === 0) return 0;
+  let shared = 0;
+  for (const token of nextTokens) {
+    if (openingTokens.has(token)) shared += 1;
+  }
+  return shared / Math.min(nextTokens.size, openingTokens.size);
+}
+
+function topicTokens(value: string): string[] {
+  const stopWords = new Set(['the', 'and', 'for', 'with', 'that', 'this', 'please', 'can', 'you', 'now', 'actually', 'instead', 'task', 'goal']);
+  return normalizeEvidenceText(value)
+    .split(/\s+/)
+    .filter((token) => token.length >= 4 && !stopWords.has(token));
 }
 
 function latestGitSnapshot(events: LoopwatchEvent[]): GitEvidenceSnapshot | undefined {
@@ -708,6 +796,11 @@ function positiveIntEnv(value: string | undefined): number | undefined {
   if (value === undefined) return undefined;
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function pivotModeFromEnv(value: string | undefined): PivotMode | undefined {
+  if (value === 'calm' || value === 'loud') return value;
+  return undefined;
 }
 
 function compareEvents(a: LoopwatchEvent, b: LoopwatchEvent): number {

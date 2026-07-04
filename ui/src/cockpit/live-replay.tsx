@@ -29,7 +29,9 @@ export type LoopwatchLiveReplay = {
   bridges: ReactNode;
 };
 
-export function useLoopwatchLiveReplay(engineRuntime: EngineRuntime): LoopwatchLiveReplay {
+export type PivotMode = 'calm' | 'loud';
+
+export function useLoopwatchLiveReplay(engineRuntime: EngineRuntime, pivotMode: PivotMode = 'calm'): LoopwatchLiveReplay {
   const runsQuery = useQuery<LoopwatchRunPointer[], Error>({
     queryKey: ['loopwatch-run-index', engineRuntime.flueBaseUrl],
     queryFn: ({ signal }) => fetchLoopwatchRuns(engineRuntime, signal),
@@ -37,8 +39,8 @@ export function useLoopwatchLiveReplay(engineRuntime: EngineRuntime): LoopwatchL
     staleTime: 500,
   });
   const convergenceQuery = useQuery({
-    queryKey: ['loopwatch-convergence', engineRuntime.flueBaseUrl],
-    queryFn: ({ signal }) => fetchConvergence(engineRuntime, signal),
+    queryKey: ['loopwatch-convergence', engineRuntime.flueBaseUrl, pivotMode],
+    queryFn: ({ signal }) => fetchConvergence(engineRuntime, pivotMode, signal),
     refetchInterval: (query) => query.state.data?.nextPollMs ?? 2000,
     staleTime: 1000,
   });
@@ -146,8 +148,8 @@ async function fetchLoopwatchRuns(engineRuntime: EngineRuntime, signal?: AbortSi
   return parsed.runs;
 }
 
-async function fetchConvergence(engineRuntime: EngineRuntime, signal?: AbortSignal): Promise<{ sessions: SessionConvergence[]; spend: ConvergenceSpend; nextPollMs: number }> {
-  const response = await fetch(loopwatchConvergenceEndpoint(engineRuntime.flueBaseUrl), withEngineAuth({ signal }, engineRuntime.bearerToken));
+async function fetchConvergence(engineRuntime: EngineRuntime, pivotMode: PivotMode, signal?: AbortSignal): Promise<{ sessions: SessionConvergence[]; spend: ConvergenceSpend; nextPollMs: number }> {
+  const response = await fetch(loopwatchConvergenceEndpoint(engineRuntime.flueBaseUrl, pivotMode), withEngineAuth({ signal }, engineRuntime.bearerToken));
   if (!response.ok) throw new Error(`Loopwatch convergence failed with HTTP ${response.status}`);
   const parsed = LoopwatchConvergenceResponseSchema.parse(await response.json());
   return { sessions: parsed.sessions, spend: parsed.spend, nextPollMs: parsed.nextPollMs };

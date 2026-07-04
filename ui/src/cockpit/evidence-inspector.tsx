@@ -112,6 +112,15 @@ function convergenceRows(session: SessionView | undefined, convergenceState: Con
     );
   }
 
+  if (convergence.pivotNudge) {
+    rows.splice(
+      2,
+      0,
+      { label: 'pivot', detail: `${convergence.pivotNudge.mode} · ${convergence.pivotNudge.title}` },
+      { label: 'fresh session', detail: convergence.pivotNudge.recommendedAction },
+    );
+  }
+
   return rows;
 }
 

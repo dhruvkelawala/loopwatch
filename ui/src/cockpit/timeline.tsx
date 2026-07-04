@@ -8,12 +8,16 @@ export function Timeline({
   focusedTimelineItemId,
   onInspectIntervention,
   onDismissIntervention,
+  pivotMode,
+  onPivotModeChange,
 }: {
   session: SessionView | undefined;
   interventionCard?: InterventionCardModel;
   focusedTimelineItemId?: string;
   onInspectIntervention: (card: InterventionCardModel) => void;
   onDismissIntervention: (id: string) => void;
+  pivotMode: 'calm' | 'loud';
+  onPivotModeChange: (mode: 'calm' | 'loud') => void;
 }) {
   if (!session) return <EmptyTimeline />;
 
@@ -29,6 +33,7 @@ export function Timeline({
             </span>
             <SeverityBadge severity={session.severity} />
             <LivenessPill liveness={session.liveness} />
+            <PivotModeToggle mode={pivotMode} onChange={onPivotModeChange} />
           </div>
           <p className="mt-3 max-w-[760px] text-[12.5px] leading-[1.65] text-watch-ink-2">
             <b className="font-semibold text-watch-ink">Goal:</b> {session.goal}
@@ -44,6 +49,7 @@ export function Timeline({
         <MetricCard label="convergence" value="—" detail="judge lands in Slice 6" compact />
       </div>
 
+      {session.convergence?.pivotNudge?.mode === 'loud' ? <PivotCoachingCard session={session} /> : null}
       {interventionCard ? <InterventionCard card={interventionCard} onInspect={onInspectIntervention} onDismiss={onDismissIntervention} /> : null}
 
       <div className="px-5 pb-12 pt-3">
@@ -80,6 +86,42 @@ function MetricCard({ label, value, detail, tone, compact = false }: { label: st
       <div className={`mt-1.5 truncate font-mono leading-none tracking-[-.02em] ${compact ? 'text-[15px]' : 'text-[22px]'} ${valueClass}`}>{value}</div>
       <div className="mt-1.5 font-mono text-[10px] text-watch-ink-3">{detail}</div>
     </div>
+  );
+}
+
+function PivotModeToggle({ mode, onChange }: { mode: 'calm' | 'loud'; onChange: (mode: 'calm' | 'loud') => void }) {
+  const nextMode = mode === 'calm' ? 'loud' : 'calm';
+  return (
+    <button
+      aria-label="Toggle Pivot nudge mode"
+      className="rounded-[5px] border border-watch-line bg-watch-glass-strong px-2 py-0.5 font-mono text-[9.5px] uppercase tracking-[.05em] text-watch-ink-2 transition hover:border-watch-accent/45 hover:text-watch-accent"
+      onClick={() => onChange(nextMode)}
+      type="button"
+    >
+      Pivot {mode}
+    </button>
+  );
+}
+
+function PivotCoachingCard({ session }: { session: SessionView }) {
+  const pivot = session.convergence?.pivotNudge;
+  if (!pivot) return null;
+
+  return (
+    <article aria-label="Pivot Coaching Card" className="mx-5 mt-4 rounded-[14px] border border-severity-watch/28 bg-watch-card p-4 shadow-watch-card">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-[6px] bg-severity-watch/16 px-2 py-1 font-mono text-[10px] font-semibold uppercase tracking-[.12em] text-severity-watch">Coaching</span>
+        <h2 className="text-[13.5px] font-semibold text-watch-ink">{pivot.title}</h2>
+        <span className="ml-auto rounded-[6px] border border-watch-line bg-watch-code px-2 py-1 font-mono text-[10px] uppercase text-watch-ink-3">fresh session</span>
+      </div>
+      <p className="mt-3 text-[12.5px] leading-[1.65] text-watch-ink-2">{pivot.detail}</p>
+      <p className="mt-3 rounded-[10px] border border-watch-line bg-watch-bg-deep px-3 py-2 font-mono text-[11px] leading-[1.6] text-watch-ink">{pivot.recommendedAction}</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-watch-ink-3">
+        <span>Receipt {pivot.eventId}</span>
+        <span className="h-1 w-1 rounded-full bg-watch-line-2" />
+        <span>{formatClock(pivot.timestamp)}</span>
+      </div>
+    </article>
   );
 }
 

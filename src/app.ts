@@ -74,6 +74,7 @@ app.get('/loopwatch/convergence', async (c) => {
   const parsed = LoopwatchConvergenceQuerySchema.safeParse({
     limit: c.req.query('limit') ?? undefined,
     scanLimit: c.req.query('scanLimit') ?? undefined,
+    pivotMode: c.req.query('pivotMode') ?? undefined,
   });
   if (!parsed.success) {
     return c.json({ ok: false, error: 'invalid_request', issues: parsed.error.issues }, 400);
@@ -86,7 +87,7 @@ app.get('/loopwatch/convergence', async (c) => {
   const recordedEvents = eventGroups.flat();
   const gitEvents = buildScopedGitEvidenceEvents(recordedEvents, { nowMs, activeAfterMs: config.idleAfterMs });
   const library = await loadLoopLibrary();
-  const snapshot = buildConvergenceSnapshot([...recordedEvents, ...gitEvents], { ...config, nowMs, loopAnchoring: { loops: library.loops } });
+  const snapshot = buildConvergenceSnapshot([...recordedEvents, ...gitEvents], { ...config, pivotMode: parsed.data.pivotMode ?? config.pivotMode, nowMs, loopAnchoring: { loops: library.loops } });
 
   return c.json({ ok: true, ...snapshot });
 });

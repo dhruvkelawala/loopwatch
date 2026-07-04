@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { EvidenceInspector } from './cockpit/evidence-inspector';
 import { interventionCardForSession, timelineItemElementId, type InterventionCardModel } from './cockpit/intervention-card';
-import { useLoopwatchLiveReplay } from './cockpit/live-replay';
+import { useLoopwatchLiveReplay, type PivotMode } from './cockpit/live-replay';
 import { useLoopRecommendation } from './cockpit/loop-recommendation';
 import { SessionRail } from './cockpit/session-rail';
 import { useCockpitSessionModel } from './cockpit/session-model';
@@ -13,7 +13,8 @@ import type { SessionView } from './loopwatch-events';
 export function App({ engineRuntime }: { engineRuntime: EngineRuntime }) {
   const [dismissedInterventionIds, setDismissedInterventionIds] = useState<ReadonlySet<string>>(() => new Set());
   const [focusedInterventionId, setFocusedInterventionId] = useState<string | undefined>();
-  const live = useLoopwatchLiveReplay(engineRuntime);
+  const [pivotMode, setPivotMode] = useState<PivotMode>('calm');
+  const live = useLoopwatchLiveReplay(engineRuntime, pivotMode);
   const sessionModel = useCockpitSessionModel(live.events, live.convergenceSessions);
   const interventionCard = interventionCardForSession(sessionModel.selected, dismissedInterventionIds);
   const loopRecommendation = useLoopRecommendation(engineRuntime, selectedTask(sessionModel.selected));
@@ -48,6 +49,8 @@ export function App({ engineRuntime }: { engineRuntime: EngineRuntime }) {
             focusedTimelineItemId={focusedTimelineItemId}
             onInspectIntervention={inspectIntervention}
             onDismissIntervention={dismissIntervention}
+            pivotMode={pivotMode}
+            onPivotModeChange={setPivotMode}
           />
           <EvidenceInspector
             session={sessionModel.selected}
