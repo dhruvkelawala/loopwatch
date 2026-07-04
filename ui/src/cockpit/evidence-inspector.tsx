@@ -39,6 +39,10 @@ export function EvidenceInspector({
         <EvidenceDetails rows={convergenceRows(session, convergenceState, flueBaseUrl, focusedEvidenceKey)} />
       </EvidenceCard>
 
+      <EvidenceCard title="Scoped git watcher" number="04">
+        <EvidenceDetails rows={gitWatcherRows(session)} />
+      </EvidenceCard>
+
       <div className="mx-3 my-3 border-l-2 border-severity-watch py-0.5 pl-3 text-[11.5px] leading-[1.65] text-watch-ink-2">
         Health probe: <code className="rounded bg-watch-code px-1.5 py-0.5 font-mono text-[10.5px] text-watch-accent">{healthEndpoint(flueBaseUrl)}</code>
       </div>
@@ -90,6 +94,22 @@ function convergenceRows(session: SessionView | undefined, convergenceState: Con
     { label: 'event id', detail: selectedEvidence?.eventId ?? 'none' },
     { label: 'judge', detail: `${convergence.judge.lastTier ?? 'not run'} · cap ${Math.round(convergence.judge.rateCapMs / 1000)}s` },
     { label: 'spend', detail: `cheap ${convergence.spend.cheapCalls} · strong ${convergence.spend.strongCalls} · ${convergence.spend.estimatedTokens} tokens · $${convergence.spend.estimatedCostUsd.toFixed(6)}` },
+  ];
+}
+
+function gitWatcherRows(session: SessionView | undefined): EvidenceDetail[] {
+  const git = session?.convergence?.git;
+  if (!session) return [{ label: 'scope', detail: 'No active Agent Session selected.' }];
+  if (!git) return [{ label: 'scope', detail: 'No scoped git evidence for this active session yet.' }];
+
+  return [
+    { label: 'scope', detail: 'Active-session repo only' },
+    { label: 'repo', detail: git.repo },
+    { label: 'branch', detail: git.branch },
+    { label: 'diff', detail: `${git.diff.files} files · +${git.diff.insertions}/-${git.diff.deletions}` },
+    { label: 'files', detail: git.changedFiles.length > 0 ? git.changedFiles.slice(0, 6).join(', ') : 'clean working tree' },
+    { label: 'validation', detail: git.validation.detail },
+    { label: 'head', detail: git.head ? `${git.head.sha.slice(0, 7)} ${git.head.subject}` : 'no commit observed' },
   ];
 }
 

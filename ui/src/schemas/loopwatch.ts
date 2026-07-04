@@ -74,6 +74,33 @@ export const ConvergenceSpendSchema = z.object({
 });
 export type ConvergenceSpend = z.infer<typeof ConvergenceSpendSchema>;
 
+export const GitEvidenceSnapshotSchema = z.object({
+  repoRoot: z.string().min(1),
+  repo: z.string().min(1),
+  branch: z.string().min(1),
+  dirty: z.boolean(),
+  changedFiles: z.array(z.string()),
+  diff: z.object({
+    files: z.number().int().nonnegative(),
+    insertions: z.number().int().nonnegative(),
+    deletions: z.number().int().nonnegative(),
+  }),
+  head: z
+    .object({
+      sha: z.string().min(1),
+      subject: z.string().min(1),
+      committedAt: z.string().min(1),
+    })
+    .optional(),
+  validation: z.object({
+    status: z.enum(['passed', 'failed', 'unknown']),
+    detail: z.string().min(1),
+    eventId: z.string().optional(),
+  }),
+  sampledAt: z.string().min(1),
+});
+export type GitEvidenceSnapshot = z.infer<typeof GitEvidenceSnapshotSchema>;
+
 export const SessionConvergenceSchema = z.object({
   id: z.string().min(1),
   source: z.string().min(1),
@@ -94,6 +121,7 @@ export const SessionConvergenceSchema = z.object({
   eventCount: z.number().int().nonnegative(),
   meaningfulEventCount: z.number().int().nonnegative(),
   lastEventAt: z.string(),
+  git: GitEvidenceSnapshotSchema.optional(),
 });
 export type SessionConvergence = z.infer<typeof SessionConvergenceSchema>;
 

@@ -1,3 +1,4 @@
+import { gitSnapshotFromEvent, type GitEvidenceSnapshot } from './git-watch.js';
 import { sessionKey, type LoopwatchEvent } from './events.js';
 
 export type ConvergenceStatus = 'calm' | 'watch' | 'intervention';
@@ -53,6 +54,7 @@ export interface SessionConvergenceState {
   eventCount: number;
   meaningfulEventCount: number;
   lastEventAt: string;
+  git?: GitEvidenceSnapshot;
 }
 
 export interface ConvergenceSnapshot {
@@ -187,6 +189,7 @@ function buildSessionConvergence(
 
   registry.sessions.set(id, memory);
   const [source, sessionId] = splitSessionId(id, orderedEvents[0]);
+  const git = latestGitSnapshot(orderedEvents);
   return {
     id,
     source,
@@ -207,6 +210,7 @@ function buildSessionConvergence(
     eventCount: orderedEvents.length,
     meaningfulEventCount: meaningfulEvents.length,
     lastEventAt: orderedEvents.at(-1)?.timestamp ?? '',
+    ...(git ? { git } : {}),
   };
 }
 
@@ -217,6 +221,7 @@ function judgeSession(summary: RunningSummary, events: LoopwatchEvent[], config:
   const completionClaim = [...events].reverse().find((event) => event.kind === 'message' && event.actor.type === 'agent' && completionPattern.test(textFromEvent(event) ?? ''));
   const driftEvent = events.find((event) => event.kind === 'message' && event.actor.type === 'agent' && driftPattern.test(textFromEvent(event) ?? ''));
   const burnEvent = events.find((event) => tokenTotal(event) >= (config.burnTokenThreshold ?? DEFAULT_BURN_TOKEN_THRESHOLD));
+  const latestGit = latestGitEvidence(events);
   const repeatedFailure = repeatedFailingCommand(failedValidations);
 
   if (driftEvent) {
@@ -224,15 +229,27 @@ function judgeSession(summary: RunningSummary, events: LoopwatchEvent[], config:
   }
 
   if (completionClaim && successfulValidations.length === 0) {
-    evidence.push(
-      evidenceRef(
-        completionClaim,
-        'intervention',
-        'completion_without_evidence',
-        'Completion claim has no supporting validation evidence',
-        compact(textFromEvent(completionClaim) ?? 'agent claimed completion', 180),
-      ),
-    );
+    if (latestGit && latestGit.snapshot.dirty) {
+      evidence.push(
+        evidenceRef(
+          latestGit.event,
+          'intervention',
+          'completion_without_evidence',
+          'Git evidence contradicts the completion claim',
+          gitEvidenceDetail(latestGit.snapshot),
+        ),
+      );
+    } else {
+      evidence.push(
+        evidenceRef(
+          completionClaim,
+          'intervention',
+          'completion_without_evidence',
+          'Completion claim has no supporting validation evidence',
+          compact(textFromEvent(completionClaim) ?? 'agent claimed completion', 180),
+        ),
+      );
+    }
   }
 
   if (repeatedFailure) {
@@ -282,6 +299,26 @@ function summarizeSession(events: LoopwatchEvent[]): RunningSummary {
     validation: validation.slice(-MAX_SUMMARY_ITEMS),
     concerns: [],
   };
+}
+
+function latestGitSnapshot(events: LoopwatchEvent[]): GitEvidenceSnapshot | undefined {
+  return latestGitEvidence(events)?.snapshot;
+}
+
+function latestGitEvidence(events: LoopwatchEvent[]): { event: LoopwatchEvent; snapshot: GitEvidenceSnapshot } | undefined {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index]!;
+    const snapshot = gitSnapshotFromEvent(event);
+    if (snapshot) return { event, snapshot };
+  }
+  return undefined;
+}
+
+function gitEvidenceDetail(snapshot: GitEvidenceSnapshot): string {
+  const diff = `${snapshot.diff.files} files, +${snapshot.diff.insertions}/-${snapshot.diff.deletions}`;
+  const files = snapshot.changedFiles.slice(0, 5).join(', ') || 'no changed files';
+  const overflow = snapshot.changedFiles.length > 5 ? `, +${snapshot.changedFiles.length - 5} more` : '';
+  return `${snapshot.repo}@${snapshot.branch}: dirty working tree (${diff}); ${snapshot.validation.detail}; files: ${files}${overflow}`;
 }
 
 function groupEvents(events: LoopwatchEvent[]): Map<string, LoopwatchEvent[]> {
@@ -338,6 +375,7 @@ function isMeaningfulEvent(event: LoopwatchEvent): boolean {
   if (event.kind === 'usage') return true;
   if (isValidationEvent(event)) return true;
   const command = commandFromEvent(event);
+  if (gitSnapshotFromEvent(event)) return true;
   if (command && /^\s*git\s+(commit|diff|status|push)\b/i.test(command)) return true;
   const tool = toolNameFromEvent(event)?.toLowerCase();
   return tool !== undefined && fileToolNames[tool] === true;

@@ -78,9 +78,21 @@ function applyConvergence(sessions: SessionView[], convergenceBySession: Map<str
       phase: convergence.status === 'calm' ? session.phase : convergence.evidence[0]?.signal.replaceAll('_', ' ') ?? session.phase,
       severity: convergence.status,
       convergence,
-      lanes: withConvergenceLane(session.lanes, convergence),
+      lanes: withConvergenceLane(withGitLane(session.lanes, convergence), convergence),
     };
   });
+}
+
+function withGitLane(lanes: TimelineLane[], convergence: SessionConvergence): TimelineLane[] {
+  if (!convergence.git) return lanes;
+  const item: TimelineItem = {
+    id: `${convergence.id}:git:${convergence.git.sampledAt}`,
+    at: convergence.git.sampledAt,
+    label: convergence.git.dirty ? 'Working tree changed' : 'Working tree clean',
+    tone: convergence.git.dirty ? 'watch' : 'calm',
+    detail: `${convergence.git.diff.files} files · +${convergence.git.diff.insertions}/-${convergence.git.diff.deletions} · ${convergence.git.validation.detail}`,
+  };
+  return lanes.map((lane) => (lane.lane === 'git' ? { lane: lane.lane, items: [item] } : lane));
 }
 
 function withConvergenceLane(lanes: TimelineLane[], convergence: SessionConvergence): TimelineLane[] {

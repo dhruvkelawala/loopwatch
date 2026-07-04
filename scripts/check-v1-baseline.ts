@@ -81,6 +81,17 @@ const baselineChecks: VerificationCheck[] = [
     ],
   },
   {
+    name: 'Scoped git watcher contract',
+    command: ['pnpm', 'git:check'],
+    issues: ['#12'],
+    adrs: ['ADR-0002', 'ADR-0003', 'ADR-0010'],
+    proves: [
+      'only active-session repositories are sampled for git evidence',
+      'git evidence carries branch, diff, changed files, latest commit, and validation status',
+      'dirty completion claims cite git evidence until a passing validation is observed',
+    ],
+  },
+  {
     name: 'Layered alerting contract',
     command: ['pnpm', 'alerting:check'],
     issues: ['#10'],
