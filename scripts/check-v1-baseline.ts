@@ -92,6 +92,17 @@ const baselineChecks: VerificationCheck[] = [
     ],
   },
   {
+    name: 'Loop Library recommendation contract',
+    command: ['pnpm', 'loop:check'],
+    issues: ['#13'],
+    adrs: ['ADR-0010'],
+    proves: [
+      'starter and user-added Loops carry trigger, action, verification, memory, and observable stop conditions',
+      'task recommendations return a relevant copy-to-use Coaching Card without executing loop commands',
+      'app-owned Loop Library endpoints use the same local recommendation-only contract',
+    ],
+  },
+  {
     name: 'Layered alerting contract',
     command: ['pnpm', 'alerting:check'],
     issues: ['#10'],

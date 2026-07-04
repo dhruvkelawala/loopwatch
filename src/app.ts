@@ -5,8 +5,9 @@ import { Hono, type MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
 import { buildConvergenceSnapshot, convergenceConfigFromEnv } from './convergence.js';
 import { buildScopedGitEvidenceEvents } from './git-watch.js';
+import { addUserLoop, loadLoopLibrary, LoopSchema, recommendLoopFromLibrary } from './loops.js';
 import { LoopwatchEventSchema, sessionKey, type LoopwatchEvent } from './events.js';
-import { LOOPWATCH_EVENT_WORKFLOWS, LoopwatchConvergenceQuerySchema, LoopwatchRunsQuerySchema } from './schemas/loopwatch.js';
+import { LOOPWATCH_EVENT_WORKFLOWS, LoopwatchConvergenceQuerySchema, LoopwatchLoopRecommendationQuerySchema, LoopwatchRunsQuerySchema } from './schemas/loopwatch.js';
 
 const app = new Hono();
 
@@ -87,6 +88,40 @@ app.get('/loopwatch/convergence', async (c) => {
   const snapshot = buildConvergenceSnapshot([...recordedEvents, ...gitEvents], { ...config, nowMs });
 
   return c.json({ ok: true, ...snapshot });
+});
+
+app.get('/loopwatch/loops', async (c) => {
+  const library = await loadLoopLibrary();
+  return c.json(library);
+});
+
+app.get('/loopwatch/loops/recommend', async (c) => {
+  const parsed = LoopwatchLoopRecommendationQuerySchema.safeParse({
+    task: c.req.query('task') ?? undefined,
+  });
+  if (!parsed.success) {
+    return c.json({ ok: false, error: 'invalid_request', issues: parsed.error.issues }, 400);
+  }
+
+  const recommendation = await recommendLoopFromLibrary(parsed.data.task);
+  return c.json(recommendation);
+});
+
+app.post('/loopwatch/loops', async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: 'invalid_request' }, 400);
+  }
+
+  const parsed = LoopSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ ok: false, error: 'invalid_request', issues: parsed.error.issues }, 400);
+  }
+
+  const loop = await addUserLoop(parsed.data);
+  return c.json({ ok: true, loop }, 201);
 });
 
 app.route('/', flue());

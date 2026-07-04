@@ -2,11 +2,13 @@ import { useState } from 'react';
 import { EvidenceInspector } from './cockpit/evidence-inspector';
 import { interventionCardForSession, timelineItemElementId, type InterventionCardModel } from './cockpit/intervention-card';
 import { useLoopwatchLiveReplay } from './cockpit/live-replay';
+import { useLoopRecommendation } from './cockpit/loop-recommendation';
 import { SessionRail } from './cockpit/session-rail';
 import { useCockpitSessionModel } from './cockpit/session-model';
 import { Timeline } from './cockpit/timeline';
 import { TitleBar } from './cockpit/title-bar';
 import type { EngineRuntime } from './engine-runtime';
+import type { SessionView } from './loopwatch-events';
 
 export function App({ engineRuntime }: { engineRuntime: EngineRuntime }) {
   const [dismissedInterventionIds, setDismissedInterventionIds] = useState<ReadonlySet<string>>(() => new Set());
@@ -14,6 +16,7 @@ export function App({ engineRuntime }: { engineRuntime: EngineRuntime }) {
   const live = useLoopwatchLiveReplay(engineRuntime);
   const sessionModel = useCockpitSessionModel(live.events, live.convergenceSessions);
   const interventionCard = interventionCardForSession(sessionModel.selected, dismissedInterventionIds);
+  const loopRecommendation = useLoopRecommendation(engineRuntime, selectedTask(sessionModel.selected));
   const focusedTimelineItemId = interventionCard && focusedInterventionId === interventionCard.id ? interventionCard.timelineItemId : undefined;
 
   const inspectIntervention = (card: InterventionCardModel) => {
@@ -52,6 +55,7 @@ export function App({ engineRuntime }: { engineRuntime: EngineRuntime }) {
             bridgeState={live.bridgeState}
             convergenceState={live.convergenceState}
             focusedEvidenceKey={focusedInterventionId}
+            loopRecommendation={loopRecommendation}
           />
         </section>
 
@@ -66,4 +70,8 @@ export function App({ engineRuntime }: { engineRuntime: EngineRuntime }) {
       </main>
     </>
   );
+}
+
+function selectedTask(session: SessionView | undefined): string | undefined {
+  return session?.convergence?.summary.goal ?? session?.title;
 }

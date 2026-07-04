@@ -12,6 +12,7 @@ type CockpitFixture = {
   health: unknown;
   runs: { ok: true; runs: readonly { runId: string }[]; nextPollMs: number };
   convergence: unknown;
+  loopRecommendation?: unknown;
   runEvents?: readonly unknown[];
 };
 
@@ -42,6 +43,34 @@ const deepLinkCockpitFixture = {
 const securedDeepLinkTitle = 'Claude session cockpit';
 const interventionDeepLinkTitle = 'Ship the Slice 7 intervention surface without hiding failed validation.';
 
+
+const defaultLoopRecommendation = {
+  ok: true,
+  card: {
+    type: 'coaching',
+    task: 'Ship the current Loopwatch slice with verification.',
+    loop: {
+      id: 'vertical-feature-slice',
+      title: 'Vertical Feature Slice',
+      summary: 'Build one user-visible increment from contract through verification and review.',
+      trigger: 'Use for an issue slice or acceptance-criteria-driven change.',
+      action: 'Implement the smallest complete user outcome.',
+      verification: 'Run the focused deterministic check and reviewer gate.',
+      memory: 'Record issue, ADRs, commands, and evidence.',
+      stopCondition: {
+        evidence: 'All acceptance criteria pass with deterministic harness output.',
+        observable: true,
+      },
+      tags: ['feature', 'slice', 'verification'],
+    },
+    score: 8,
+    reason: 'Matched Vertical Feature Slice from task terms: slice.',
+    copyPrompt: 'Use the \"Vertical Feature Slice\" Loop for this task.\\n\\nTask: Ship the current Loopwatch slice with verification.\\n\\nStop condition: All acceptance criteria pass with deterministic harness output.\\n\\nRecommendation only: Loopwatch does not execute this loop.',
+    recommendationOnly: true,
+  },
+  loops: [],
+  userLoopsPath: '/tmp/loopwatch-user-loops.json',
+} as const;
 async function expectSelectedCockpitSession(page: Page, session: { title: string; goal: string }): Promise<void> {
   const selectedRow = page.getByRole('button', { name: session.title });
 
@@ -65,6 +94,10 @@ async function routeCockpitFixture(page: Page, fixture: CockpitFixture, routed: 
   await page.route('**/api/loopwatch/convergence', async (route) => {
     routed.push('/api/loopwatch/convergence');
     await route.fulfill({ json: fixture.convergence });
+  });
+  await page.route('**/api/loopwatch/loops/recommend**', async (route) => {
+    routed.push('/api/loopwatch/loops/recommend');
+    await route.fulfill({ json: fixture.loopRecommendation ?? defaultLoopRecommendation });
   });
   for (const run of fixture.runs.runs) {
     await page.route(`**/api/runs/${run.runId}**`, async (route) => {
@@ -133,6 +166,10 @@ test('Cockpit renders against mocked engine endpoints without Tauri', async ({ p
     routed.push('/api/loopwatch/convergence');
     await route.fulfill({ json: cockpitEngineFixture.convergence });
   });
+  await page.route('**/api/loopwatch/loops/recommend**', async (route) => {
+    routed.push('/api/loopwatch/loops/recommend');
+    await route.fulfill({ json: defaultLoopRecommendation });
+  });
 
   await page.goto('/');
 
@@ -166,6 +203,10 @@ test('Cockpit sends the runtime bearer token on direct engine fetches and displa
     securedRequests.push({ path: '/api/loopwatch/convergence', authorization: route.request().headers().authorization ?? null });
     await route.fulfill({ json: securedCockpitEngineFixture.convergence });
   });
+  await page.route('**/api/loopwatch/loops/recommend**', async (route) => {
+    securedRequests.push({ path: '/api/loopwatch/loops/recommend', authorization: route.request().headers().authorization ?? null });
+    await route.fulfill({ json: defaultLoopRecommendation });
+  });
   await page.route('**/api/runs/run-secured-completed**', async (route) => {
     securedRequests.push({ path: '/api/runs/run-secured-completed', authorization: route.request().headers().authorization ?? null });
     await route.fulfill({
@@ -182,10 +223,10 @@ test('Cockpit sends the runtime bearer token on direct engine fetches and displa
 
   await expect(page.getByText('Loopwatch Cockpit · Watchtower')).toBeVisible();
   await expect.poll(() => securedRequests.map((request) => request.path)).toEqual(
-    expect.arrayContaining(['/api/health', '/api/loopwatch/runs', '/api/loopwatch/convergence', '/api/runs/run-secured-completed']),
+    expect.arrayContaining(['/api/health', '/api/loopwatch/runs', '/api/loopwatch/convergence', '/api/loopwatch/loops/recommend', '/api/runs/run-secured-completed']),
   );
 
-  for (const path of ['/api/health', '/api/loopwatch/runs', '/api/loopwatch/convergence', '/api/runs/run-secured-completed']) {
+  for (const path of ['/api/health', '/api/loopwatch/runs', '/api/loopwatch/convergence', '/api/loopwatch/loops/recommend', '/api/runs/run-secured-completed']) {
     expect(securedRequests.find((request) => request.path === path), `${path} carries the runtime bearer token`).toMatchObject({
       authorization: expectedAuthorization,
     });
@@ -195,6 +236,12 @@ test('Cockpit sends the runtime bearer token on direct engine fetches and displa
   await expect(page.getByText('$0.001470').first()).toBeVisible();
   await expect(page.getByText(/cheap\s+1/i).first()).toBeVisible();
   await expect(page.getByText(/strong\s+1/i).first()).toBeVisible();
+
+  const inspector = page.locator('aside', { hasText: 'Evidence inspector' });
+  await expect(inspector).toContainText('Coaching recommendation');
+  await expect(inspector).toContainText('Vertical Feature Slice');
+  await expect(inspector).toContainText('All acceptance criteria pass with deterministic harness output.');
+  await expect(inspector.locator('textarea')).toHaveValue(/Use the "Vertical Feature Slice" Loop/);
 });
 
 test('Intervention card exposes its evidence receipt and deep-links to the matching timeline moment', async ({ page }) => {

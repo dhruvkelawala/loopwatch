@@ -11,3 +11,7 @@ export const LoopwatchRunsQuerySchema = z.object({
 });
 
 export const LoopwatchConvergenceQuerySchema = LoopwatchRunsQuerySchema;
+
+export const LoopwatchLoopRecommendationQuerySchema = z.object({
+  task: z.string().trim().min(1),
+});

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { Severity, SessionView } from '../loopwatch-events';
 import { healthEndpoint, loopwatchConvergenceEndpoint, loopwatchRunsEndpoint } from './endpoints';
 import type { ConvergenceBridgeState, RunBridgeState } from './live-replay';
+import type { LoopRecommendationState } from './loop-recommendation';
 import { interventionEvidenceKey } from './intervention-card';
 
 export function EvidenceInspector({
@@ -10,12 +11,14 @@ export function EvidenceInspector({
   bridgeState,
   convergenceState,
   focusedEvidenceKey,
+  loopRecommendation,
 }: {
   session: SessionView | undefined;
   flueBaseUrl: string;
   bridgeState: RunBridgeState;
   convergenceState: ConvergenceBridgeState;
   focusedEvidenceKey?: string;
+  loopRecommendation: LoopRecommendationState;
 }) {
   return (
     <aside className="min-h-0 overflow-auto border-l border-watch-line bg-gradient-to-b from-watch-panel to-watch-panel-2 max-[980px]:hidden">
@@ -41,6 +44,10 @@ export function EvidenceInspector({
 
       <EvidenceCard title="Scoped git watcher" number="04">
         <EvidenceDetails rows={gitWatcherRows(session)} />
+      </EvidenceCard>
+
+      <EvidenceCard title="Coaching recommendation" number="05">
+        <EvidenceDetails rows={loopRecommendationRows(loopRecommendation)} />
       </EvidenceCard>
 
       <div className="mx-3 my-3 border-l-2 border-severity-watch py-0.5 pl-3 text-[11.5px] leading-[1.65] text-watch-ink-2">
@@ -111,6 +118,37 @@ function gitWatcherRows(session: SessionView | undefined): EvidenceDetail[] {
     { label: 'validation', detail: git.validation.detail },
     { label: 'head', detail: git.head ? `${git.head.sha.slice(0, 7)} ${git.head.subject}` : 'no commit observed' },
   ];
+}
+
+function loopRecommendationRows(recommendation: LoopRecommendationState): EvidenceDetail[] {
+  const card = recommendation.card;
+  if (!card) return [{ label: 'loop', detail: recommendation.detail }];
+
+  return [
+    { label: 'loop', detail: card.loop.title },
+    { label: 'why', detail: card.reason },
+    { label: 'stop', detail: card.loop.stopCondition.evidence },
+    { label: 'copy', detail: <CopyPrompt value={card.copyPrompt} /> },
+  ];
+}
+
+function CopyPrompt({ value }: { value: string }) {
+  return (
+    <div className="grid gap-2">
+      <textarea
+        className="min-h-28 resize-y rounded-[8px] border border-watch-line bg-watch-code px-2 py-1.5 font-mono text-[10.5px] leading-[1.45] text-watch-ink-2 outline-none"
+        readOnly
+        value={value}
+      />
+      <button
+        className="w-fit rounded-[7px] border border-watch-line bg-watch-panel px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-watch-ink-2 hover:border-watch-accent/50 hover:text-watch-accent"
+        onClick={() => void navigator.clipboard?.writeText(value)}
+        type="button"
+      >
+        Copy loop prompt
+      </button>
+    </div>
+  );
 }
 
 function EvidenceDetails({ rows }: { rows: EvidenceDetail[] }) {

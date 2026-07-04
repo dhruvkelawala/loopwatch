@@ -132,3 +132,41 @@ export const LoopwatchConvergenceResponseSchema = z.object({
   nextPollMs: z.number().int().positive(),
 });
 export type LoopwatchConvergenceResponse = z.infer<typeof LoopwatchConvergenceResponseSchema>;
+
+export const LoopStopConditionSchema = z.object({
+  evidence: z.string().min(1),
+  observable: z.boolean(),
+});
+export type LoopStopCondition = z.infer<typeof LoopStopConditionSchema>;
+
+export const LoopSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  trigger: z.string().min(1),
+  action: z.string().min(1),
+  verification: z.string().min(1),
+  memory: z.string().min(1),
+  stopCondition: LoopStopConditionSchema,
+  tags: z.array(z.string()),
+});
+export type Loop = z.infer<typeof LoopSchema>;
+
+export const CoachingCardSchema = z.object({
+  type: z.literal('coaching'),
+  task: z.string().min(1),
+  loop: LoopSchema,
+  score: z.number().nonnegative(),
+  reason: z.string().min(1),
+  copyPrompt: z.string().min(1),
+  recommendationOnly: z.literal(true),
+});
+export type CoachingCard = z.infer<typeof CoachingCardSchema>;
+
+export const LoopRecommendationResponseSchema = z.object({
+  ok: z.literal(true),
+  card: CoachingCardSchema,
+  loops: z.array(LoopSchema),
+  userLoopsPath: z.string().min(1),
+});
+export type LoopRecommendationResponse = z.infer<typeof LoopRecommendationResponseSchema>;
