@@ -5,6 +5,7 @@ import { recordedLoopwatchEvents, type LoopwatchEvent } from '../loopwatch-event
 import { LoopwatchRunsResponseSchema, type LoopwatchRunPointer } from '../schemas/loopwatch';
 import { loopwatchRunsEndpoint } from './endpoints';
 import { keepIndexedBatches, replayRunIds, type RunBatches } from './run-index';
+import { withEngineAuth, type EngineRuntime } from '../engine-runtime';
 
 export type RunBridgeState = {
   runCount: number;
@@ -19,10 +20,10 @@ export type LoopwatchLiveReplay = {
   bridges: ReactNode;
 };
 
-export function useLoopwatchLiveReplay(flueBaseUrl: string): LoopwatchLiveReplay {
+export function useLoopwatchLiveReplay(engineRuntime: EngineRuntime): LoopwatchLiveReplay {
   const runsQuery = useQuery<LoopwatchRunPointer[], Error>({
-    queryKey: ['loopwatch-run-index', flueBaseUrl],
-    queryFn: ({ signal }) => fetchLoopwatchRuns(flueBaseUrl, signal),
+    queryKey: ['loopwatch-run-index', engineRuntime.flueBaseUrl],
+    queryFn: ({ signal }) => fetchLoopwatchRuns(engineRuntime, signal),
     refetchInterval: 1000,
     staleTime: 500,
   });
@@ -107,8 +108,8 @@ function runBridgeState(runsQuery: UseQueryResult<LoopwatchRunPointer[], Error>,
   return { runCount, eventCount, status: 'connected', detail: `${eventCount} events · ${runCount} runs · ${activeRunCount} live` };
 }
 
-async function fetchLoopwatchRuns(baseUrl: string, signal?: AbortSignal): Promise<LoopwatchRunPointer[]> {
-  const response = await fetch(loopwatchRunsEndpoint(baseUrl), { signal });
+async function fetchLoopwatchRuns(engineRuntime: EngineRuntime, signal?: AbortSignal): Promise<LoopwatchRunPointer[]> {
+  const response = await fetch(loopwatchRunsEndpoint(engineRuntime.flueBaseUrl), withEngineAuth({ signal }, engineRuntime.bearerToken));
   if (!response.ok) throw new Error(`Loopwatch run index failed with HTTP ${response.status}`);
   const parsed = LoopwatchRunsResponseSchema.parse(await response.json());
   return parsed.runs;

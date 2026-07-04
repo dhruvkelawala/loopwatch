@@ -16,6 +16,7 @@
     "adapter:check": "tsx scripts/check-claude-adapter.ts",
     "events:check": "tsx scripts/check-normalized-event.ts",
     "ingest:check": "tsx scripts/check-claude-ingest.ts",
+    "security:check": "tsx scripts/check-engine-security.ts",
     "cockpit:check": "tsx scripts/check-cockpit-live.ts",
     "persistence:check": "tsx scripts/check-flue-persistence.ts",
     "v1:baseline": "tsx scripts/check-v1-baseline.ts",

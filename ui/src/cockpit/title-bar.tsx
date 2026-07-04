@@ -1,6 +1,7 @@
 import { useQuery, type UseQueryResult } from '@tanstack/react-query';
 import { EngineHealthSchema, type EngineHealth } from '../schemas/loopwatch';
 import { healthEndpoint } from './endpoints';
+import { withEngineAuth, type EngineRuntime } from '../engine-runtime';
 import type { RunBridgeState } from './live-replay';
 import { BrandGlyph, statusLightClass } from './visual';
 
@@ -9,7 +10,7 @@ type EngineState =
   | { kind: 'connected'; label: string; detail: string }
   | { kind: 'offline'; label: string; detail: string };
 
-export function TitleBar({ flueBaseUrl, bridgeState }: { flueBaseUrl: string; bridgeState: RunBridgeState }) {
+export function TitleBar({ engineRuntime, bridgeState }: { engineRuntime: EngineRuntime; bridgeState: RunBridgeState }) {
   return (
     <header className="flex items-center gap-3 border-b border-watch-line bg-gradient-to-b from-watch-bg-top to-watch-bg-bottom px-3.5">
       <div className="flex items-center gap-2 text-watch-accent">
@@ -23,19 +24,19 @@ export function TitleBar({ flueBaseUrl, bridgeState }: { flueBaseUrl: string; br
       </div>
       <div className="flex-1" />
       <LiveStreamConnection state={bridgeState} />
-      <EngineConnection flueBaseUrl={flueBaseUrl} />
+      <EngineConnection engineRuntime={engineRuntime} />
     </header>
   );
 }
 
-function EngineConnection({ flueBaseUrl }: { flueBaseUrl: string }) {
+function EngineConnection({ engineRuntime }: { engineRuntime: EngineRuntime }) {
   const health = useQuery<EngineHealth, Error>({
-    queryKey: ['engine-health', flueBaseUrl],
-    queryFn: ({ signal }) => fetchEngineHealth(flueBaseUrl, signal),
+    queryKey: ['engine-health', engineRuntime.flueBaseUrl],
+    queryFn: ({ signal }) => fetchEngineHealth(engineRuntime, signal),
     refetchInterval: 5000,
     staleTime: 2500,
   });
-  const state = engineState(health, flueBaseUrl);
+  const state = engineState(health, engineRuntime.flueBaseUrl);
   const colorClass = statusLightClass[state.kind];
 
   return (
@@ -81,8 +82,8 @@ function engineState(health: UseQueryResult<EngineHealth, Error>, flueBaseUrl: s
   };
 }
 
-async function fetchEngineHealth(baseUrl: string, signal?: AbortSignal): Promise<EngineHealth> {
-  const response = await fetch(healthEndpoint(baseUrl), { signal });
+async function fetchEngineHealth(engineRuntime: EngineRuntime, signal?: AbortSignal): Promise<EngineHealth> {
+  const response = await fetch(healthEndpoint(engineRuntime.flueBaseUrl), withEngineAuth({ signal }, engineRuntime.bearerToken));
   if (!response.ok) throw new Error(`Health probe failed with HTTP ${response.status}`);
   return EngineHealthSchema.parse(await response.json());
 }

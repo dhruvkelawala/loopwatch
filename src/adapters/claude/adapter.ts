@@ -214,11 +214,14 @@ export class ClaudeAdapter {
 }
 
 /** Default ingest: POST a batch to the running Flue server's record-events workflow. */
-export function httpIngest(serverUrl: string): IngestFn {
+export function httpIngest(serverUrl: string, options: { token?: string } = {}): IngestFn {
   return async (events) => {
+    const headers = new Headers({ 'content-type': 'application/json' });
+    if (options.token) headers.set('authorization', `Bearer ${options.token}`);
+
     const response = await fetch(`${serverUrl}/workflows/record-events?wait=result`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify({ events }),
     });
     if (!response.ok) {

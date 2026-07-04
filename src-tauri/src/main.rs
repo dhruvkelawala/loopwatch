@@ -1,5 +1,8 @@
 use std::{
     env,
+    fmt::Write as FmtWrite,
+    fs, io,
+    net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -13,13 +16,29 @@ use tauri::{Manager, RunEvent, WindowEvent};
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const COCKPIT_WINDOW_LABEL: &str = "cockpit";
 
-/// Fixed port the Flue engine listens on. The packaged webview's base URL
-/// (`ui/src/main.tsx`) and the CSP `connect-src` (`tauri.conf.json`) are pinned
-/// to this port, so it is intentionally not user-overridable.
-const ENGINE_PORT: &str = "3583";
+/// Development port kept stable so the Vite proxy can reach the engine during
+/// `tauri dev`; release launches reserve an ephemeral localhost port.
+const DEV_ENGINE_PORT: u16 = 3583;
+const ENGINE_TOKEN_BYTES: usize = 32;
 
 /// Env switch for disabling adapter supervision in local diagnostics.
 const CLAUDE_ADAPTER_ENV: &str = "LOOPWATCH_CLAUDE_ADAPTER";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EngineLaunchConfig {
+    port: u16,
+    token: String,
+}
+
+impl EngineLaunchConfig {
+    fn base_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
+
+    fn allowed_hosts(&self) -> String {
+        format!("127.0.0.1:{},localhost:{}", self.port, self.port)
+    }
+}
 
 struct BackgroundProcesses {
     engine: Mutex<Option<Child>>,
@@ -153,10 +172,110 @@ fn show_cockpit(app_handle: &tauri::AppHandle) {
     }
 }
 
+fn build_engine_launch_config() -> Result<EngineLaunchConfig, Box<dyn std::error::Error>> {
+    let port = match env::var("LOOPWATCH_ENGINE_PORT") {
+        Ok(raw) => parse_engine_port(&raw)?,
+        Err(_) if cfg!(debug_assertions) => DEV_ENGINE_PORT,
+        Err(_) => reserve_ephemeral_loopback_port()?,
+    };
+    let token = match env::var("LOOPWATCH_ENGINE_TOKEN") {
+        Ok(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+        _ => generate_engine_token()?,
+    };
+
+    Ok(EngineLaunchConfig { port, token })
+}
+
+fn parse_engine_port(raw: &str) -> Result<u16, Box<dyn std::error::Error>> {
+    let port = raw.parse::<u16>()?;
+    if port == 0 {
+        return Err("LOOPWATCH_ENGINE_PORT must be between 1 and 65535".into());
+    }
+    Ok(port)
+}
+
+fn reserve_ephemeral_loopback_port() -> Result<u16, Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    Ok(listener.local_addr()?.port())
+}
+
+fn generate_engine_token() -> Result<String, Box<dyn std::error::Error>> {
+    let mut bytes = [0_u8; ENGINE_TOKEN_BYTES];
+    getrandom::getrandom(&mut bytes).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("failed to generate engine token: {error}"),
+        )
+    })?;
+
+    let mut token = String::with_capacity(ENGINE_TOKEN_BYTES * 2);
+    for byte in bytes {
+        write!(&mut token, "{byte:02x}")?;
+    }
+    Ok(token)
+}
+
+fn write_runtime_config(
+    project_root: &Path,
+    engine_config: &EngineLaunchConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let body = runtime_config_json(engine_config, cfg!(debug_assertions));
+    for path in runtime_config_paths(project_root) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, &body)?;
+    }
+    Ok(())
+}
+
+fn runtime_config_paths(project_root: &Path) -> [PathBuf; 2] {
+    [
+        project_root.join("ui/dist/loopwatch-runtime.json"),
+        project_root.join("ui/public/loopwatch-runtime.json"),
+    ]
+}
+
+fn runtime_config_json(engine_config: &EngineLaunchConfig, use_vite_proxy: bool) -> String {
+    let base_url = if use_vite_proxy {
+        "/api".to_string()
+    } else {
+        engine_config.base_url()
+    };
+    format!(
+        "{{\"baseUrl\":{},\"bearerToken\":{}}}",
+        json_string(&base_url),
+        json_string(&engine_config.token)
+    )
+}
+
+fn json_string(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            ch if ch < ' ' => {
+                write!(&mut escaped, "\\u{:04x}", ch as u32)
+                    .expect("writing to String cannot fail");
+            }
+            ch => escaped.push(ch),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
 fn spawn_background_processes() -> Result<BackgroundProcesses, Box<dyn std::error::Error>> {
     let project_root = project_root()?;
-    let mut engine = spawn_flue_engine(&project_root)?;
-    let claude_adapter = match spawn_claude_adapter(&project_root) {
+    let engine_config = build_engine_launch_config()?;
+    write_runtime_config(&project_root, &engine_config)?;
+    let mut engine = spawn_flue_engine(&project_root, &engine_config)?;
+    let claude_adapter = match spawn_claude_adapter(&project_root, &engine_config) {
         Ok(adapter) => adapter,
         Err(error) => {
             terminate_child("Flue engine", &mut engine);
@@ -170,7 +289,10 @@ fn spawn_background_processes() -> Result<BackgroundProcesses, Box<dyn std::erro
     })
 }
 
-fn spawn_flue_engine(project_root: &Path) -> Result<Child, Box<dyn std::error::Error>> {
+fn spawn_flue_engine(
+    project_root: &Path,
+    engine_config: &EngineLaunchConfig,
+) -> Result<Child, Box<dyn std::error::Error>> {
     let server_path = project_root.join("dist/server.mjs");
     if !server_path.exists() {
         return Err(format!(
@@ -184,7 +306,12 @@ fn spawn_flue_engine(project_root: &Path) -> Result<Child, Box<dyn std::error::E
     let mut child = Command::new(node_bin)
         .arg(&server_path)
         .current_dir(project_root)
-        .env("PORT", ENGINE_PORT)
+        .env("PORT", engine_config.port.to_string())
+        .env("LOOPWATCH_ENGINE_TOKEN", &engine_config.token)
+        .env(
+            "LOOPWATCH_ENGINE_ALLOWED_HOSTS",
+            engine_config.allowed_hosts(),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -193,21 +320,25 @@ fn spawn_flue_engine(project_root: &Path) -> Result<Child, Box<dyn std::error::E
     thread::sleep(Duration::from_millis(250));
     if let Some(status) = child.try_wait()? {
         return Err(format!(
-            "Flue engine exited during startup with status {status}. Is port {ENGINE_PORT} already in use?"
+            "Flue engine exited during startup with status {status}. Is port {} already in use?",
+            engine_config.port
         )
         .into());
     }
 
     println!(
-        "[loopwatch] spawned Flue engine pid={} on http://127.0.0.1:{}",
+        "[loopwatch] spawned Flue engine pid={} on {}",
         child.id(),
-        ENGINE_PORT
+        engine_config.base_url()
     );
 
     Ok(child)
 }
 
-fn spawn_claude_adapter(project_root: &Path) -> Result<Option<Child>, Box<dyn std::error::Error>> {
+fn spawn_claude_adapter(
+    project_root: &Path,
+    engine_config: &EngineLaunchConfig,
+) -> Result<Option<Child>, Box<dyn std::error::Error>> {
     if !claude_adapter_enabled() {
         println!("[loopwatch] Claude adapter disabled by {CLAUDE_ADAPTER_ENV}");
         return Ok(None);
@@ -226,7 +357,8 @@ fn spawn_claude_adapter(project_root: &Path) -> Result<Option<Child>, Box<dyn st
     let mut child = Command::new(node_bin)
         .arg(&adapter_path)
         .current_dir(project_root)
-        .env("LOOPWATCH_SERVER_URL", format!("http://127.0.0.1:{ENGINE_PORT}"))
+        .env("LOOPWATCH_SERVER_URL", engine_config.base_url())
+        .env("LOOPWATCH_ENGINE_TOKEN", &engine_config.token)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -244,7 +376,10 @@ fn spawn_claude_adapter(project_root: &Path) -> Result<Option<Child>, Box<dyn st
 
 fn claude_adapter_enabled() -> bool {
     match env::var(CLAUDE_ADAPTER_ENV) {
-        Ok(value) => !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"),
+        Ok(value) => !matches!(
+            value.to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
         Err(_) => true,
     }
 }

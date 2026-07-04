@@ -19,6 +19,7 @@ data/
 playwright-report/
 test-results/
 package-lock.json
+ui/public/loopwatch-runtime.json
 
 # Env / secrets
 .env

@@ -4,9 +4,10 @@ import { SessionRail } from './cockpit/session-rail';
 import { useCockpitSessionModel } from './cockpit/session-model';
 import { Timeline } from './cockpit/timeline';
 import { TitleBar } from './cockpit/title-bar';
+import type { EngineRuntime } from './engine-runtime';
 
-export function App({ flueBaseUrl }: { flueBaseUrl: string }) {
-  const live = useLoopwatchLiveReplay(flueBaseUrl);
+export function App({ engineRuntime }: { engineRuntime: EngineRuntime }) {
+  const live = useLoopwatchLiveReplay(engineRuntime);
   const sessionModel = useCockpitSessionModel(live.events);
 
   return (
@@ -14,7 +15,7 @@ export function App({ flueBaseUrl }: { flueBaseUrl: string }) {
       {live.bridges}
 
       <main className="grid h-screen grid-rows-[42px_1fr_26px] overflow-hidden bg-watch-shell font-sans text-[12.5px] tracking-[-0.005em] text-watch-ink antialiased">
-        <TitleBar flueBaseUrl={flueBaseUrl} bridgeState={live.bridgeState} />
+        <TitleBar engineRuntime={engineRuntime} bridgeState={live.bridgeState} />
 
         <section className="grid min-h-0 grid-cols-[260px_minmax(520px,1fr)_320px] overflow-hidden max-[980px]:grid-cols-[236px_minmax(480px,1fr)]">
           <SessionRail
@@ -23,7 +24,7 @@ export function App({ flueBaseUrl }: { flueBaseUrl: string }) {
             onSelect={sessionModel.selectSession}
           />
           <Timeline session={sessionModel.selected} />
-          <EvidenceInspector session={sessionModel.selected} flueBaseUrl={flueBaseUrl} bridgeState={live.bridgeState} />
+          <EvidenceInspector session={sessionModel.selected} flueBaseUrl={engineRuntime.flueBaseUrl} bridgeState={live.bridgeState} />
         </section>
 
         <footer className="flex items-center gap-4 border-t border-watch-line bg-watch-bg-deep px-4 font-mono text-[10px] text-watch-ink-3">
