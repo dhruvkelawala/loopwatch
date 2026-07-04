@@ -39,14 +39,14 @@ export function Timeline({
             <b className="font-semibold text-watch-ink">Goal:</b> {session.goal}
           </p>
         </div>
-        <ConvergenceDial />
+        <ConvergenceDial severity={session.severity} label={convergenceDialLabel(session)} />
       </div>
 
       <div className="grid grid-cols-4 border-b border-watch-line max-[1120px]:grid-cols-2">
         <MetricCard label="elapsed" value={session.elapsed} detail="source session" />
         <MetricCard label="phase" value={session.phase} detail="from latest event" compact />
         <MetricCard label="events" value={String(session.eventCount)} detail="replayed + live" />
-        <MetricCard label="convergence" value="—" detail="judge lands in Slice 6" compact />
+        <MetricCard label="convergence" value={session.convergence?.status ?? session.severity} detail={convergenceMetricDetail(session)} tone={session.severity} compact />
       </div>
 
       {session.convergence?.pivotNudge?.mode === 'loud' ? <PivotCoachingCard session={session} /> : null}
@@ -76,6 +76,17 @@ function EmptyTimeline() {
       </div>
     </section>
   );
+}
+
+function convergenceMetricDetail(session: SessionView): string {
+  const convergence = session.convergence;
+  if (!convergence) return 'waiting for watcher evidence';
+  return `${convergence.meaningfulEventCount} meaningful · ${convergence.spend.totalCalls} judge calls`;
+}
+
+function convergenceDialLabel(session: SessionView): string {
+  if (!session.convergence) return 'watching';
+  return `judge ${session.convergence.status}`;
 }
 
 function MetricCard({ label, value, detail, tone, compact = false }: { label: string; value: string; detail: string; tone?: Severity; compact?: boolean }) {
@@ -173,7 +184,7 @@ function TimelineChip({ item, focused }: { item: TimelineItem; focused?: boolean
 }
 
 function LaneEmpty({ lane }: { lane: string }) {
-  const detail = lane === 'convergence' ? 'No convergence judge yet.' : 'No replayed events in this lane yet.';
+  const detail = lane === 'convergence' ? 'No convergence concerns yet.' : lane === 'cost' ? 'No token or cost events replayed yet.' : 'No replayed events in this lane yet.';
   return <span className="text-watch-ink-3">{detail}</span>;
 }
 

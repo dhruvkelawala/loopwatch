@@ -10,6 +10,32 @@ const ConvergenceSpendSchema = z.object({
   estimatedCostUsd: z.number().nonnegative(),
 });
 
+const GitEvidenceSnapshotSchema = z.object({
+  repoRoot: z.string().min(1),
+  repo: z.string().min(1),
+  branch: z.string().min(1),
+  dirty: z.boolean(),
+  changedFiles: z.array(z.string()),
+  diff: z.object({
+    files: z.number().int().nonnegative(),
+    insertions: z.number().int().nonnegative(),
+    deletions: z.number().int().nonnegative(),
+  }),
+  head: z
+    .object({
+      sha: z.string().min(1),
+      subject: z.string().min(1),
+      committedAt: z.string().min(1),
+    })
+    .optional(),
+  validation: z.object({
+    status: z.enum(['passed', 'failed', 'unknown']),
+    detail: z.string().min(1),
+    eventId: z.string().optional(),
+  }),
+  sampledAt: z.string().min(1),
+});
+
 const LoopAnchorSchema = z.object({
   loopId: z.string().min(1),
   title: z.string().min(1),
@@ -87,6 +113,7 @@ const ConvergenceSessionSchema = z.object({
   eventCount: z.number().int().nonnegative(),
   meaningfulEventCount: z.number().int().nonnegative(),
   lastEventAt: z.string().min(1),
+  git: GitEvidenceSnapshotSchema.optional(),
   loopAnchor: LoopAnchorSchema.optional(),
   pivotNudge: PivotNudgeSchema.optional(),
   postSessionInsight: PostSessionInsightSchema.optional(),
@@ -366,6 +393,350 @@ export const interventionCockpitEngineFixture = {
         payload: {
           toolName: 'bash',
           content: 'pnpm convergence:check exited 1',
+        },
+      },
+    },
+  ],
+} as const;
+
+export const watchtowerCockpitFixture = {
+  health: {
+    ok: true,
+    service: 'loopwatch-watchtower-fixture-engine',
+    target: 'playwright',
+  },
+  runs: {
+    ok: true,
+    runs: [
+      {
+        runId: 'run-watchtower-cockpit-ui',
+        workflowName: 'record-events',
+        status: 'completed',
+        startedAt: '2026-07-04T14:00:00.000Z',
+        endedAt: '2026-07-04T14:59:45.000Z',
+        durationMs: 3_585_000,
+      },
+    ],
+    nextPollMs: 1000,
+  },
+  convergence: {
+    ok: true,
+    sessions: [
+      {
+        id: 'claude:watchtower-active',
+        source: 'claude',
+        sessionId: 'watchtower-active',
+        status: 'intervention',
+        liveness: 'active',
+        summary: {
+          goal: 'Stabilize Watchtower Cockpit fidelity with populated-source evidence.',
+          done: ['rendered three-pane cockpit shell', 'captured source capability badges'],
+          validation: ['pnpm e2e:cockpit is still red on the convergence readout'],
+          concerns: ['Cost lane is empty even though usage evidence exists', 'Convergence dial still shows placeholder copy'],
+        },
+        evidence: [
+          {
+            eventId: 'watchtower-cost-lane-empty',
+            timestamp: '2026-07-04T14:59:45.000Z',
+            kind: 'usage',
+            severity: 'watch',
+            signal: 'burn',
+            title: 'Cost evidence is not in the cost lane',
+            detail: 'Usage evidence recorded 3200 tokens and $0.003210 but the populated lane is missing.',
+          },
+          {
+            eventId: 'watchtower-placeholder-readout',
+            timestamp: '2026-07-04T14:59:46.000Z',
+            kind: 'diagnostic',
+            severity: 'intervention',
+            signal: 'completion_without_evidence',
+            title: 'Convergence readout is still placeholder copy',
+            detail: 'The selected session must show the strong judge tier, call count, and spend instead of Slice 6 placeholder text.',
+            recommendedAction: 'Replace placeholder convergence copy with the selected session judge tier, last reason, call count, and spend.',
+          },
+        ],
+        judge: {
+          provider: 'deterministic-fake-v1',
+          lastTier: 'strong',
+          lastRunAt: '2026-07-04T14:59:46.000Z',
+          nextEligibleAt: '2026-07-04T15:00:46.000Z',
+          lastReason: 'completion_without_evidence',
+          rateCapMs: 60_000,
+        },
+        spend: {
+          cheapCalls: 2,
+          strongCalls: 1,
+          totalCalls: 3,
+          estimatedTokens: 3_200,
+          estimatedCostUsd: 0.00321,
+        },
+        git: {
+          repoRoot: '/Users/d/dev/loopwatch',
+          repo: 'loopwatch',
+          branch: 'watchtower-cockpit',
+          dirty: true,
+          changedFiles: ['ui/src/cockpit/timeline.tsx', 'ui/src/cockpit/session-rail.tsx'],
+          diff: {
+            files: 2,
+            insertions: 42,
+            deletions: 7,
+          },
+          head: {
+            sha: 'abc1234',
+            subject: 'Expose Watchtower Cockpit live readouts',
+            committedAt: '2026-07-04T14:40:00.000Z',
+          },
+          validation: {
+            status: 'failed',
+            detail: 'pnpm e2e:cockpit failed before readout wiring landed',
+            eventId: 'watchtower-validation-red',
+          },
+          sampledAt: '2026-07-04T14:59:44.000Z',
+        },
+        eventCount: 6,
+        meaningfulEventCount: 6,
+        lastEventAt: '2026-07-04T14:59:45.000Z',
+      },
+      {
+        id: 'pi:watchtower-idle',
+        source: 'pi',
+        sessionId: 'watchtower-idle',
+        status: 'watch',
+        liveness: 'idle',
+        summary: {
+          goal: 'Verify Pi source parity in the Watchtower rail.',
+          done: ['reported direct Pi token and cost evidence'],
+          validation: ['pnpm source:check passed'],
+          concerns: ['Freshness should show idle without collapsing the row into the active Claude group'],
+        },
+        evidence: [
+          {
+            eventId: 'pi-idle-freshness',
+            timestamp: '2026-07-04T14:50:00.000Z',
+            kind: 'usage',
+            severity: 'watch',
+            signal: 'drift',
+            title: 'Pi source is idle but fresh enough to inspect',
+            detail: 'The Pi session last wrote 10m ago and should keep its .liv idle freshness tag.',
+          },
+        ],
+        judge: {
+          provider: 'deterministic-fake-v1',
+          lastTier: 'cheap',
+          lastRunAt: '2026-07-04T14:50:01.000Z',
+          nextEligibleAt: '2026-07-04T14:51:01.000Z',
+          lastReason: 'drift',
+          rateCapMs: 60_000,
+        },
+        spend: {
+          cheapCalls: 1,
+          strongCalls: 0,
+          totalCalls: 1,
+          estimatedTokens: 400,
+          estimatedCostUsd: 0.00028,
+        },
+        eventCount: 2,
+        meaningfulEventCount: 2,
+        lastEventAt: '2026-07-04T14:50:00.000Z',
+      },
+      {
+        id: 'codex:watchtower-ended',
+        source: 'codex',
+        sessionId: 'watchtower-ended',
+        status: 'calm',
+        liveness: 'ended',
+        summary: {
+          goal: 'Archive the Codex adapter smoke evidence for Watchtower.',
+          done: ['preserved Codex transcript and branch evidence'],
+          validation: ['pnpm adapter:check passed'],
+          concerns: [],
+        },
+        evidence: [],
+        judge: {
+          provider: 'deterministic-fake-v1',
+          lastTier: 'cheap',
+          lastRunAt: '2026-07-04T14:00:03.000Z',
+          nextEligibleAt: '2026-07-04T14:01:03.000Z',
+          rateCapMs: 60_000,
+        },
+        spend: {
+          cheapCalls: 1,
+          strongCalls: 1,
+          totalCalls: 2,
+          estimatedTokens: 2_000,
+          estimatedCostUsd: 0.00071,
+        },
+        eventCount: 2,
+        meaningfulEventCount: 2,
+        lastEventAt: '2026-07-04T14:00:02.000Z',
+      },
+    ],
+    spend: {
+      cheapCalls: 4,
+      strongCalls: 2,
+      totalCalls: 6,
+      estimatedTokens: 5_600,
+      estimatedCostUsd: 0.0042,
+    },
+    nextPollMs: 2_000,
+  },
+  runEvents: [
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'watchtower-active',
+        timestamp: '2026-07-04T14:59:00.000Z',
+        kind: 'message',
+        actor: { type: 'user' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'watchtower-cockpit' },
+        payload: { content: 'Stabilize Watchtower Cockpit fidelity with populated-source evidence.' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'watchtower-active',
+        timestamp: '2026-07-04T14:59:05.000Z',
+        kind: 'system',
+        actor: { type: 'system' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'watchtower-cockpit' },
+        payload: { content: 'Watchtower cockpit source adapter attached.' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'watchtower-active',
+        timestamp: '2026-07-04T14:59:10.000Z',
+        kind: 'tool_call',
+        actor: { type: 'agent' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'watchtower-cockpit' },
+        payload: {
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                name: 'edit',
+                input: { path: 'ui/src/cockpit/timeline.tsx' },
+              },
+            ],
+          },
+        },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'watchtower-active',
+        timestamp: '2026-07-04T14:59:25.000Z',
+        kind: 'tool_call',
+        actor: { type: 'agent' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'watchtower-cockpit' },
+        payload: {
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                name: 'bash',
+                input: { command: 'pnpm playwright test tests/e2e/cockpit.spec.ts' },
+              },
+            ],
+          },
+        },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'watchtower-active',
+        timestamp: '2026-07-04T14:59:35.000Z',
+        kind: 'tool_result',
+        actor: { type: 'tool', name: 'bash' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'watchtower-cockpit' },
+        payload: {
+          toolName: 'bash',
+          validation: { command: 'pnpm playwright test tests/e2e/cockpit.spec.ts', exitCode: 1 },
+          content: 'pnpm e2e:cockpit failed before convergence readout wiring landed',
+        },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'claude',
+        sessionId: 'watchtower-active',
+        timestamp: '2026-07-04T14:59:45.000Z',
+        kind: 'usage',
+        actor: { type: 'system' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'watchtower-cockpit' },
+        payload: { usage: { totalTokens: 3_200, cost: { total: 0.00321 } } },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'pi',
+        sessionId: 'watchtower-idle',
+        timestamp: '2026-07-04T14:49:00.000Z',
+        kind: 'message',
+        actor: { type: 'user' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'pi-source-parity' },
+        payload: { content: 'Verify Pi source parity in the Watchtower rail.' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'pi',
+        sessionId: 'watchtower-idle',
+        timestamp: '2026-07-04T14:50:00.000Z',
+        kind: 'usage',
+        actor: { type: 'system' },
+        context: { cwd: '/Users/d/dev/loopwatch', repo: 'loopwatch', gitBranch: 'pi-source-parity' },
+        payload: { usage: { input: 120, output: 280, costUsd: 0.00028 } },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'codex',
+        sessionId: 'watchtower-ended',
+        timestamp: '2026-07-04T14:00:00.000Z',
+        kind: 'message',
+        actor: { type: 'user' },
+        context: { cwd: '/Users/d/dev/adapter-lab', repo: 'adapter-lab', gitBranch: 'codex-archive' },
+        payload: { content: 'Archive the Codex adapter smoke evidence for Watchtower.' },
+      },
+    },
+    {
+      type: 'log',
+      message: 'loopwatch.event.recorded',
+      attributes: {
+        source: 'codex',
+        sessionId: 'watchtower-ended',
+        timestamp: '2026-07-04T14:00:02.000Z',
+        kind: 'tool_call',
+        actor: { type: 'agent' },
+        context: { cwd: '/Users/d/dev/adapter-lab', repo: 'adapter-lab', gitBranch: 'codex-archive' },
+        payload: {
+          tool: {
+            name: 'bash',
+            arguments: { command: 'pnpm adapter:check' },
+          },
         },
       },
     },
@@ -833,6 +1204,11 @@ export function validateCockpitEngineFixture(): void {
   ConvergenceResponseSchema.parse(interventionCockpitEngineFixture.convergence);
   z.literal(1).parse(interventionCockpitEngineFixture.convergence.sessions.length);
   z.literal(3).parse(interventionCockpitEngineFixture.runEvents.length);
+  EngineHealthSchema.parse(watchtowerCockpitFixture.health);
+  LoopwatchRunsResponseSchema.parse(watchtowerCockpitFixture.runs);
+  ConvergenceResponseSchema.parse(watchtowerCockpitFixture.convergence);
+  z.literal(3).parse(watchtowerCockpitFixture.convergence.sessions.length);
+  z.literal(10).parse(watchtowerCockpitFixture.runEvents.length);
   EngineHealthSchema.parse(pivotCockpitEngineFixture.health);
   LoopwatchRunsResponseSchema.parse(pivotCockpitEngineFixture.runs);
   ConvergenceResponseSchema.parse(pivotCockpitEngineFixture.convergence);

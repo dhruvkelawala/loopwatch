@@ -3,7 +3,7 @@ import { EngineHealthSchema, type EngineHealth } from '../schemas/loopwatch';
 import { healthEndpoint } from './endpoints';
 import { withEngineAuth, type EngineRuntime } from '../engine-runtime';
 import type { RunBridgeState } from './live-replay';
-import { BrandGlyph, statusLightClass } from './visual';
+import { BrandGlyph, SeverityBadge, statusLightClass } from './visual';
 
 type EngineState =
   | { kind: 'checking'; label: string; detail: string }
@@ -22,10 +22,22 @@ export function TitleBar({ engineRuntime, bridgeState }: { engineRuntime: Engine
         local-first <b className="font-medium text-watch-ink-2">/</b>{' '}
         <span className="font-medium text-watch-ink">Cockpit</span>
       </div>
+      <SeveritySpectrum />
       <div className="flex-1" />
       <LiveStreamConnection state={bridgeState} />
       <EngineConnection engineRuntime={engineRuntime} />
     </header>
+  );
+}
+
+function SeveritySpectrum() {
+  return (
+    <div aria-label="Severity spectrum" className="hidden items-center gap-1.5 font-mono text-[9.5px] uppercase tracking-[.08em] text-watch-ink-3 min-[1120px]:flex">
+      <span>severity</span>
+      <SeverityBadge severity="calm" />
+      <SeverityBadge severity="watch" />
+      <SeverityBadge severity="intervention" />
+    </div>
   );
 }
 

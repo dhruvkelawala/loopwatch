@@ -26,9 +26,10 @@ export function SessionRail({
           <EmptyRail />
         ) : (
           groupedSessions.map((group) => (
-            <section className="mt-1.5" key={group.repo}>
+            <section className="mt-1.5" key={group.key}>
               <div className="flex items-center gap-1.5 px-3.5 py-1 font-mono text-[10px] text-watch-ink-3">
-                {group.repo}
+                <span className="truncate">{group.repo}</span>
+                <SourceBadge label={group.source} />
                 <span className="ml-auto opacity-60">{group.sessions.length}</span>
               </div>
               {group.sessions.map((session) => (
@@ -81,7 +82,7 @@ function SessionRow({ session, selected, onSelect }: { session: SessionView; sel
         <span className="mt-0.5 block truncate font-mono text-[10px] text-watch-ink-3">
           {session.source} · {session.repo} · {session.branch}
         </span>
-        <span className="mt-1 block truncate font-mono text-[10px] text-watch-ink-2">phase · {session.phase}</span>
+        <span className="mt-1 block truncate font-mono text-[10px] text-watch-ink-2">phase · {session.phase} · freshness · {session.freshness}</span>
         <span className="mt-1 flex flex-wrap gap-1">
           {session.capabilities.map((capability) => (
             <CapabilityBadge key={capability.key} label={capability.label} state={capability.state} title={capability.detail} />

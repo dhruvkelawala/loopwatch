@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buildSessionViews, type LoopwatchEvent, type SessionConvergence, type SessionView, type TimelineItem, type TimelineLane } from '../loopwatch-events';
 
-export type SessionGroup = { repo: string; sessions: SessionView[] };
+export type SessionGroup = { key: string; repo: string; source: string; sessions: SessionView[] };
 
 export function useCockpitSessionModel(events: LoopwatchEvent[], convergenceSessions: SessionConvergence[] = []) {
   const nowMs = useNow(15_000);
@@ -60,13 +60,14 @@ function useNow(intervalMs: number): number {
 function groupSessionsByRepo(sessions: SessionView[]): SessionGroup[] {
   const groups = new Map<string, SessionView[]>();
   for (const session of sessions) {
-    const group = groups.get(session.repo) ?? [];
+    const key = `${session.repo}\u0000${session.source}`;
+    const group = groups.get(key) ?? [];
     group.push(session);
-    groups.set(session.repo, group);
+    groups.set(key, group);
   }
   return [...groups.entries()]
-    .map(([repo, group]) => ({ repo, sessions: group }))
-    .sort((a, b) => a.repo.localeCompare(b.repo));
+    .map(([key, group]) => ({ key, repo: group[0]?.repo ?? 'repo unavailable', source: group[0]?.source ?? 'Source unavailable', sessions: group }))
+    .sort((a, b) => a.repo.localeCompare(b.repo) || a.source.localeCompare(b.source));
 }
 
 function applyConvergence(sessions: SessionView[], convergenceBySession: Map<string, SessionConvergence>): SessionView[] {

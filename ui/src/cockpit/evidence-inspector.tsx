@@ -76,6 +76,7 @@ function currentReadRows(session: SessionView): EvidenceDetail[] {
     { label: 'branch', detail: session.branch },
     { label: 'phase', detail: session.phase },
     { label: 'last event', detail: session.lastEvent },
+    { label: 'freshness', detail: session.freshness },
   ];
 }
 

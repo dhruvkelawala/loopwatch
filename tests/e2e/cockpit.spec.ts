@@ -8,6 +8,7 @@ import {
   postSessionInsightCockpitEngineFixture,
   pivotCockpitEngineFixture,
   upgradesCockpitEngineFixture,
+  watchtowerCockpitFixture,
   securedCockpitEngineFixture,
 } from '../support/cockpit-fixture.js';
 
@@ -125,6 +126,18 @@ async function routeCockpitFixture(page: Page, fixture: CockpitFixture, routed: 
   }
   return routed;
 }
+
+const watchtowerFixtureNow = '2026-07-04T15:00:00.000Z';
+const watchtowerLaneNames = ['request', 'tools', 'files', 'git', 'validation', 'liveness', 'cost', 'convergence'] as const;
+
+async function openWatchtowerCockpitFixture(page: Page): Promise<void> {
+  await page.addInitScript((fixedIso) => {
+    Date.now = () => Date.parse(fixedIso);
+  }, watchtowerFixtureNow);
+  await routeCockpitFixture(page, watchtowerCockpitFixture);
+  await page.goto('/');
+}
+
 
 function convergenceWithPivotMode(convergence: unknown, mode: PivotMode): unknown {
   if (!convergence || typeof convergence !== 'object' || Array.isArray(convergence)) return convergence;
@@ -273,6 +286,114 @@ test('Cockpit sends the runtime bearer token on direct engine fetches and displa
   await expect(inspector).toContainText('Vertical Feature Slice');
   await expect(inspector).toContainText('All acceptance criteria pass with deterministic harness output.');
   await expect(inspector.locator('textarea')).toHaveValue(/Use the "Vertical Feature Slice" Loop/);
+});
+
+test('Watchtower Cockpit renders populated rail groups, source capabilities, lanes, and live spend', async ({ page }) => {
+  await openWatchtowerCockpitFixture(page);
+
+  const deck = page.locator('main > section');
+  await expect(deck.locator(':scope > aside')).toHaveCount(2);
+  await expect(deck.locator(':scope > section')).toHaveCount(1);
+  await expect(page.locator('main')).toHaveCSS('font-family', /Geist Sans/);
+  await expect(page.getByText('.liv active').first()).toHaveCSS('font-family', /Geist Mono/);
+
+  const rail = deck.locator(':scope > aside').first();
+  await expect(rail).toContainText('Session rail');
+  const railGroups = rail.locator('section').filter({ has: page.getByRole('button') });
+  await expect(railGroups).toHaveCount(3);
+  await expect(railGroups.filter({ hasText: 'loopwatch' }).filter({ hasText: /\bClaude\b/ })).toHaveCount(1);
+  await expect(railGroups.filter({ hasText: 'loopwatch' }).filter({ hasText: /\bPi\b/ })).toHaveCount(1);
+  await expect(railGroups.filter({ hasText: 'adapter-lab' }).filter({ hasText: /\bCodex\b/ })).toHaveCount(1);
+
+  const claudeRow = page.getByRole('button', { name: /Stabilize Watchtower Cockpit fidelity/ });
+  await expect(claudeRow).toContainText('Claude');
+  await expect(claudeRow).toContainText('loopwatch');
+  await expect(claudeRow).toContainText('watchtower-cockpit');
+  await expect(claudeRow).toContainText('active');
+  await expect(claudeRow).toContainText('transcript');
+  await expect(claudeRow).toContainText('tools');
+  await expect(claudeRow).toContainText('tokens');
+  await expect(claudeRow).toContainText('cost unavailable');
+  await expect(claudeRow).toContainText('branch');
+
+  const piRow = page.getByRole('button', { name: /Verify Pi source parity/ });
+  await expect(piRow).toContainText('Pi');
+  await expect(piRow).toContainText('idle');
+  await expect(piRow).toContainText('cost');
+  await expect(piRow).toContainText('tokens');
+
+  const codexRow = page.getByRole('button', { name: /Archive the Codex adapter smoke evidence/ });
+  await expect(codexRow).toContainText('Codex');
+  await expect(codexRow).toContainText('ended');
+  await expect(codexRow).toContainText('tokens unavailable');
+  await expect(codexRow).toContainText('cost unavailable');
+
+  const timeline = deck.locator(':scope > section');
+  const laneRows = timeline.locator('div.grid.min-h-\\[42px\\]');
+  const requestLane = laneRows.filter({ has: page.getByText('request', { exact: true }) });
+  const toolsLane = laneRows.filter({ has: page.getByText('tools', { exact: true }) });
+  const filesLane = laneRows.filter({ has: page.getByText('files', { exact: true }) });
+  const gitLane = laneRows.filter({ has: page.getByText('git', { exact: true }) });
+  const validationLane = laneRows.filter({ has: page.getByText('validation', { exact: true }) });
+  const livenessLane = laneRows.filter({ has: page.getByText('liveness', { exact: true }) });
+  const costLane = laneRows.filter({ has: page.getByText('cost', { exact: true }) });
+  const convergenceLane = laneRows.filter({ has: page.getByText('convergence', { exact: true }) });
+  await expect(timeline.getByRole('heading', { name: /Stabilize Watchtower Cockpit fidelity/ })).toBeVisible();
+  await expect(requestLane).toContainText('User request');
+  await expect(toolsLane).toContainText('System event');
+  await expect(filesLane).toContainText('edit call');
+  await expect(gitLane).toContainText('Working tree changed');
+  await expect(gitLane).toContainText('2 files · +42/-7 · pnpm e2e:cockpit failed before readout wiring landed');
+  await expect(validationLane).toContainText('pnpm playwright test tests/e2e/cockpit.spec.ts');
+  await expect(livenessLane).toContainText('.liv active');
+  await expect(livenessLane).toContainText('15s since last source write');
+  await expect(costLane).not.toContainText('No replayed events in this lane yet.');
+  await expect(costLane).toContainText(/3,?200 tokens|\$0\.003210|usage/i);
+  await expect(convergenceLane).toContainText('Convergence readout is still placeholder copy');
+
+  const laneLabels = laneRows.locator(':scope > div:first-child');
+  await expect(laneLabels).toHaveText([...watchtowerLaneNames]);
+
+  const titleBar = page.locator('header');
+  await expect(titleBar).toContainText('live replay');
+  await expect(titleBar).toContainText('10 events');
+  const footer = page.locator('footer');
+  await expect(footer).toContainText('Loopwatch Cockpit · Watchtower');
+  await expect(footer).toContainText('1 Flue batch runs replayed');
+  await expect(footer).toContainText('10 normalized events');
+  await expect(footer).toContainText('LLM spend cheap 4 · strong 2 · $0.004200');
+  await expect(footer).toContainText('3 watched · 6 judge calls · $0.004200');
+});
+
+test('Watchtower Cockpit shows the severity spectrum and no Slice 6 placeholders when populated', async ({ page }) => {
+  await openWatchtowerCockpitFixture(page);
+
+  const timeline = page.locator('main > section > section');
+  const laneRows = timeline.locator('div.grid.min-h-\\[42px\\]');
+  const livenessLane = laneRows.filter({ has: page.getByText('liveness', { exact: true }) });
+  const convergenceLane = laneRows.filter({ has: page.getByText('convergence', { exact: true }) });
+  await expect(timeline).toContainText('intervene');
+  await expect(livenessLane).toContainText('.liv active');
+  await expect(timeline).toContainText('judge intervention');
+  await expect(timeline).toContainText('3 judge calls');
+  await expect(page.getByText('No replayed events in this lane yet.')).toHaveCount(0);
+
+  await page.getByRole('button', { name: /Verify Pi source parity/ }).click();
+  await expect(timeline.getByRole('heading', { name: /Verify Pi source parity/ })).toBeVisible();
+  await expect(timeline).toContainText('watch');
+  await expect(livenessLane).toContainText('.liv idle');
+  await expect(livenessLane).toContainText('10m since last source write');
+
+  await page.getByRole('button', { name: /Archive the Codex adapter smoke evidence/ }).click();
+  await expect(timeline.getByRole('heading', { name: /Archive the Codex adapter smoke evidence/ })).toBeVisible();
+  await expect(timeline).toContainText('calm');
+  await expect(livenessLane).toContainText('.liv ended');
+  await expect(livenessLane).toContainText(/(?:59m|1h 0m) since last source write/);
+
+  await expect(page.getByText('Start the Flue engine and Claude Source Adapter.')).toHaveCount(0);
+  await expect(page.getByText('Waiting for source activity')).toHaveCount(0);
+  await expect(page.getByText('judge lands in Slice 6')).toHaveCount(0);
+  await expect(page.getByText('judge off')).toHaveCount(0);
 });
 
 test('Intervention card exposes its evidence receipt and deep-links to the matching timeline moment', async ({ page }) => {
