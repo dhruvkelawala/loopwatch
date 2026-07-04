@@ -118,6 +118,17 @@ const baselineChecks: VerificationCheck[] = [
     ],
   },
   {
+    name: 'Evidence privacy contract',
+    command: ['pnpm', 'evidence:privacy:check'],
+    issues: ['#1'],
+    adrs: ['ADR-0006', 'ADR-0002'],
+    proves: [
+      'default Evidence Packets contain structured summary and signal evidence instead of raw transcripts',
+      'outbound evidence payloads redact common secret shapes before leaving the machine',
+      'deep analyze transcript snippets require explicit consent and remain scoped to one evidence card',
+    ],
+  },
+  {
     name: 'Layered alerting contract',
     command: ['pnpm', 'alerting:check'],
     issues: ['#10'],

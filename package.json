@@ -19,6 +19,7 @@
     "source:check": "tsx scripts/check-source-parity.ts",
     "ingest:check": "tsx scripts/check-claude-ingest.ts",
     "security:check": "tsx scripts/check-engine-security.ts",
+    "evidence:privacy:check": "tsx scripts/check-evidence-privacy.ts",
     "cockpit:check": "tsx scripts/check-cockpit-live.ts",
     "convergence:check": "tsx scripts/check-convergence-watcher.ts",
     "git:check": "tsx scripts/check-scoped-git-watcher.ts",
