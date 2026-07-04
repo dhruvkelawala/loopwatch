@@ -19,6 +19,7 @@
     "security:check": "tsx scripts/check-engine-security.ts",
     "cockpit:check": "tsx scripts/check-cockpit-live.ts",
     "convergence:check": "tsx scripts/check-convergence-watcher.ts",
+    "alerting:check": "cargo test alerting::tests --manifest-path src-tauri/Cargo.toml",
     "persistence:check": "tsx scripts/check-flue-persistence.ts",
     "v1:baseline": "tsx scripts/check-v1-baseline.ts",
     "v1:harness": "pnpm harness:fixtures && pnpm harness:source-smoke && pnpm harness:eval:live",

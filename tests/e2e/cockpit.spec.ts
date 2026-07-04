@@ -10,10 +10,45 @@ import {
 
 type CockpitFixture = {
   health: unknown;
-  runs: { runs: readonly { runId: string }[] };
+  runs: { ok: true; runs: readonly { runId: string }[]; nextPollMs: number };
   convergence: unknown;
   runEvents?: readonly unknown[];
 };
+
+const securedDeepLinkSession = securedCockpitEngineFixture.convergence.sessions[0];
+const interventionDeepLinkSession = interventionCockpitEngineFixture.convergence.sessions[0];
+const deepLinkCockpitFixture = {
+  health: interventionCockpitEngineFixture.health,
+  runs: {
+    ok: true,
+    runs: [...securedCockpitEngineFixture.runs.runs, ...interventionCockpitEngineFixture.runs.runs],
+    nextPollMs: 1000,
+  },
+  convergence: {
+    ok: true,
+    sessions: [securedDeepLinkSession, interventionDeepLinkSession],
+    spend: {
+      cheapCalls: 3,
+      strongCalls: 2,
+      totalCalls: 5,
+      estimatedTokens: 3_850,
+      estimatedCostUsd: 0.00339,
+    },
+    nextPollMs: 2_000,
+  },
+  runEvents: [...securedCockpitEngineFixture.runEvents, ...interventionCockpitEngineFixture.runEvents],
+} as const satisfies CockpitFixture;
+
+const securedDeepLinkTitle = 'Claude session cockpit';
+const interventionDeepLinkTitle = 'Ship the Slice 7 intervention surface without hiding failed validation.';
+
+async function expectSelectedCockpitSession(page: Page, session: { title: string; goal: string }): Promise<void> {
+  const selectedRow = page.getByRole('button', { name: session.title });
+
+  await expect(selectedRow).toHaveClass(/bg-watch-selected/);
+  await expect(page.getByRole('heading', { name: session.title })).toBeVisible();
+  await expect(page.getByText(session.goal).first()).toBeVisible();
+}
 
 async function routeCockpitFixture(page: Page, fixture: CockpitFixture, routed: string[] = []): Promise<string[]> {
   await page.route('**/api/**', async (route) => {
@@ -46,6 +81,39 @@ async function routeCockpitFixture(page: Page, fixture: CockpitFixture, routed: 
   }
   return routed;
 }
+
+test('loopwatch:focus-session selects the matching existing Cockpit session', async ({ page }) => {
+  await routeCockpitFixture(page, deepLinkCockpitFixture);
+
+  await page.goto('/');
+
+  await page.getByRole('button', { name: interventionDeepLinkTitle }).click();
+  await expectSelectedCockpitSession(page, {
+    title: interventionDeepLinkTitle,
+    goal: interventionDeepLinkSession.summary.goal,
+  });
+
+  await page.evaluate((sessionId) => {
+    window.dispatchEvent(new CustomEvent('loopwatch:focus-session', { detail: { sessionId } }));
+  }, securedDeepLinkSession.id);
+
+  await expectSelectedCockpitSession(page, {
+    title: securedDeepLinkTitle,
+    goal: securedDeepLinkSession.summary.goal,
+  });
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe(`#session=${encodeURIComponent(securedDeepLinkSession.id)}`);
+});
+
+test('initial #session hash selects the matching existing Cockpit session', async ({ page }) => {
+  await routeCockpitFixture(page, deepLinkCockpitFixture);
+
+  await page.goto(`/#session=${encodeURIComponent(securedDeepLinkSession.id)}`);
+
+  await expectSelectedCockpitSession(page, {
+    title: securedDeepLinkTitle,
+    goal: securedDeepLinkSession.summary.goal,
+  });
+});
 
 test('Cockpit renders against mocked engine endpoints without Tauri', async ({ page }) => {
   const routed: string[] = [];

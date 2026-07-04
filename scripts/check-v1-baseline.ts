@@ -69,6 +69,18 @@ const baselineChecks: VerificationCheck[] = [
       'hard convergence signals escalate cheap judge checks to the strong judge with spend accounted',
     ],
   },
+  {
+    name: 'Layered alerting contract',
+    command: ['pnpm', 'alerting:check'],
+    issues: ['#10'],
+    adrs: ['ADR-0007'],
+    proves: [
+      'native Pulse aggregates active-session convergence state',
+      'intervention notifications are actionable only when evidence has a recommended action',
+      'notification memory deduplicates evidence keys and throttles per session',
+      'visible Cockpit suppression does not consume notification memory before hidden delivery',
+    ],
+  },
 ];
 
 const results = await runVerificationChecks(baselineChecks);

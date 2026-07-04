@@ -1,3 +1,4 @@
+mod alerting;
 use std::{
     env,
     fmt::Write as FmtWrite,
@@ -11,10 +12,6 @@ use std::{
 };
 
 use tauri::{Manager, RunEvent, WindowEvent};
-
-/// Window label for the Cockpit, declared in `tauri.conf.json`.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-const COCKPIT_WINDOW_LABEL: &str = "cockpit";
 
 /// Development port kept stable so the Vite proxy can reach the engine during
 /// `tauri dev`; release launches reserve an ephemeral localhost port.
@@ -41,6 +38,7 @@ impl EngineLaunchConfig {
 }
 
 struct BackgroundProcesses {
+    engine_config: EngineLaunchConfig,
     engine: Mutex<Option<Child>>,
     claude_adapter: Mutex<Option<Child>>,
 }
@@ -117,7 +115,13 @@ impl Drop for BackgroundProcesses {
 fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
-            app.manage(spawn_background_processes()?);
+            let processes = spawn_background_processes()?;
+            let alerting_config = alerting::EngineAlertingConfig::new(
+                processes.engine_config.base_url(),
+                processes.engine_config.token.clone(),
+            );
+            app.manage(processes);
+            alerting::setup_layered_alerting(app, alerting_config)?;
             Ok(())
         })
         .on_window_event(handle_window_event)
@@ -128,7 +132,10 @@ fn main() {
         // Clicking the dock icon (macOS "reopen") brings the hidden Cockpit back.
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
-            show_cockpit(app_handle);
+            let session_id = app_handle
+                .state::<alerting::LayeredAlertingState>()
+                .last_intervention_session();
+            alerting::show_cockpit_for_session(app_handle, session_id.as_deref());
         }
         // An explicit quit (Cmd+Q) tears the children down before the process exits.
         // `Drop` covers any exit path that skips this event.
@@ -147,7 +154,7 @@ fn main() {
 #[cfg(target_os = "macos")]
 fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
     if let WindowEvent::CloseRequested { api, .. } = event {
-        if window.label() == COCKPIT_WINDOW_LABEL {
+        if window.label() == alerting::COCKPIT_WINDOW_LABEL {
             api.prevent_close();
             if let Err(error) = window.hide() {
                 eprintln!("[loopwatch] failed to hide Cockpit window: {error}");
@@ -158,19 +165,6 @@ fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
 
 #[cfg(not(target_os = "macos"))]
 fn handle_window_event(_window: &tauri::Window, _event: &WindowEvent) {}
-
-#[cfg(target_os = "macos")]
-fn show_cockpit(app_handle: &tauri::AppHandle) {
-    let Some(window) = app_handle.get_webview_window(COCKPIT_WINDOW_LABEL) else {
-        return;
-    };
-    if let Err(error) = window.show() {
-        eprintln!("[loopwatch] failed to show Cockpit window: {error}");
-    }
-    if let Err(error) = window.set_focus() {
-        eprintln!("[loopwatch] failed to focus Cockpit window: {error}");
-    }
-}
 
 fn build_engine_launch_config() -> Result<EngineLaunchConfig, Box<dyn std::error::Error>> {
     let port = match env::var("LOOPWATCH_ENGINE_PORT") {
@@ -284,6 +278,7 @@ fn spawn_background_processes() -> Result<BackgroundProcesses, Box<dyn std::erro
     };
 
     Ok(BackgroundProcesses {
+        engine_config,
         engine: Mutex::new(Some(engine)),
         claude_adapter: Mutex::new(claude_adapter),
     })

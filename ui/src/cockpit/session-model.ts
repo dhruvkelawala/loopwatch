@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { buildSessionViews, type LoopwatchEvent, type SessionConvergence, type SessionView, type TimelineItem, type TimelineLane } from '../loopwatch-events';
 
 export type SessionGroup = { repo: string; sessions: SessionView[] };
@@ -7,13 +7,33 @@ export function useCockpitSessionModel(events: LoopwatchEvent[], convergenceSess
   const nowMs = useNow(15_000);
   const convergenceBySession = useMemo(() => new Map(convergenceSessions.map((session) => [session.id, session])), [convergenceSessions]);
   const sessions = useMemo(() => applyConvergence(buildSessionViews(events, nowMs), convergenceBySession), [events, convergenceBySession, nowMs]);
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedId, setSelectedId] = useState(() => sessionIdFromLocation());
+  const selectSession = useCallback((sessionId: string) => {
+    setSelectedId(sessionId);
+    writeSessionHash(sessionId);
+  }, []);
 
   useEffect(() => {
-    if (sessions.length === 0) {
-      if (selectedId) setSelectedId('');
-      return;
-    }
+    const focusSession = (event: Event) => {
+      const sessionId = (event as CustomEvent<{ sessionId?: unknown }>).detail?.sessionId;
+      if (typeof sessionId !== 'string' || sessionId.trim() === '') return;
+      selectSession(sessionId);
+    };
+    const syncFromHash = () => {
+      const sessionId = sessionIdFromLocation();
+      if (sessionId) setSelectedId(sessionId);
+    };
+
+    window.addEventListener('loopwatch:focus-session', focusSession);
+    window.addEventListener('hashchange', syncFromHash);
+    return () => {
+      window.removeEventListener('loopwatch:focus-session', focusSession);
+      window.removeEventListener('hashchange', syncFromHash);
+    };
+  }, [selectSession]);
+
+  useEffect(() => {
+    if (sessions.length === 0) return;
     if (!selectedId || !sessions.some((session) => session.id === selectedId)) {
       setSelectedId(sessions[0].id);
     }
@@ -23,7 +43,7 @@ export function useCockpitSessionModel(events: LoopwatchEvent[], convergenceSess
     groupedSessions: groupSessionsByRepo(sessions),
     selected: sessions.find((session) => session.id === selectedId) ?? sessions[0],
     selectedId,
-    selectSession: setSelectedId,
+    selectSession,
   };
 }
 
@@ -90,4 +110,15 @@ function convergenceItems(convergence: SessionConvergence): TimelineItem[] {
     tone: evidence.severity,
     detail: evidence.detail,
   }));
+}
+
+function sessionIdFromLocation(): string {
+  const raw = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('session');
+  return raw?.trim() ?? '';
+}
+
+function writeSessionHash(sessionId: string) {
+  const next = `session=${encodeURIComponent(sessionId)}`;
+  if (window.location.hash.replace(/^#/, '') === next) return;
+  window.history.replaceState(null, '', `#${next}`);
 }
