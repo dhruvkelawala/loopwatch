@@ -4,16 +4,19 @@ import { existsSync } from 'node:fs';
 import { chromium } from '@playwright/test';
 
 const executable = chromium.executablePath();
-const requireBrowser = process.env.LOOPWATCH_E2E_REQUIRE_BROWSER === '1';
+// Missing browsers fail the check by default so release verification cannot
+// silently skip the runtime-config/bearer-token coverage; set
+// LOOPWATCH_E2E_ALLOW_MISSING_BROWSER=1 to opt into a permissive skip.
+const allowMissingBrowser = process.env.LOOPWATCH_E2E_ALLOW_MISSING_BROWSER === '1';
 
 if (!existsSync(executable)) {
-  const message = `SKIP Cockpit Playwright E2E: Chromium is not installed at ${executable}. Run pnpm exec playwright install chromium to enable browser execution.`;
-  if (requireBrowser) {
-    console.error(message);
-    process.exit(1);
+  const message = `Cockpit Playwright E2E: Chromium is not installed at ${executable}. Run pnpm exec playwright install chromium to enable browser execution.`;
+  if (allowMissingBrowser) {
+    console.log(`SKIP ${message}`);
+    process.exit(0);
   }
-  console.log(message);
-  process.exit(0);
+  console.error(message);
+  process.exit(1);
 }
 
 const child = spawn('pnpm', ['exec', 'playwright', 'test', '--config', 'playwright.config.ts'], {

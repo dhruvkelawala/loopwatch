@@ -15,7 +15,12 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       '/api': {
-        target: process.env.LOOPWATCH_FLUE_URL ?? 'http://127.0.0.1:3583',
+        // Follow the same engine-port override the Tauri shell honors, so a
+        // dev launch with LOOPWATCH_ENGINE_PORT set still proxies (and sends
+        // the bearer token) to the right engine.
+        target:
+          process.env.LOOPWATCH_FLUE_URL ??
+          (process.env.LOOPWATCH_ENGINE_PORT ? `http://127.0.0.1:${process.env.LOOPWATCH_ENGINE_PORT}` : 'http://127.0.0.1:3583'),
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ''),
       },

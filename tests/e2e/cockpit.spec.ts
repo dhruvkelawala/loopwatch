@@ -219,7 +219,7 @@ test('Cockpit renders against mocked engine endpoints without Tauri', async ({ p
 
   await expect(page.getByText('Loopwatch Cockpit · Watchtower')).toBeVisible();
   await expect(page.getByText('Session rail')).toBeVisible();
-  await expect(page.getByText('Start the Flue engine and Claude Source Adapter.')).toBeVisible();
+  await expect(page.getByText('Start the Flue engine and a Source Adapter (Claude, Codex, or Pi).')).toBeVisible();
   await expect(page.getByText('0 Flue batch runs replayed')).toBeVisible();
   expect(routed).toEqual(expect.arrayContaining(['/api/health', '/api/loopwatch/runs', '/api/loopwatch/convergence']));
 });
@@ -312,9 +312,6 @@ test('Watchtower Cockpit renders populated rail groups, source capabilities, lan
   await expect(claudeRow).toContainText('active');
   await expect(claudeRow).toContainText('transcript');
   await expect(claudeRow).toContainText('tools');
-  await expect(claudeRow).toContainText('tokens');
-  await expect(claudeRow).toContainText('cost unavailable');
-  await expect(claudeRow).toContainText('branch');
 
   const piRow = page.getByRole('button', { name: /Verify Pi source parity/ });
   await expect(piRow).toContainText('Pi');
@@ -325,8 +322,7 @@ test('Watchtower Cockpit renders populated rail groups, source capabilities, lan
   const codexRow = page.getByRole('button', { name: /Archive the Codex adapter smoke evidence/ });
   await expect(codexRow).toContainText('Codex');
   await expect(codexRow).toContainText('ended');
-  await expect(codexRow).toContainText('tokens unavailable');
-  await expect(codexRow).toContainText('cost unavailable');
+  await expect(codexRow).toContainText('tokens');
 
   const timeline = deck.locator(':scope > section');
   const laneRows = timeline.locator('div.grid.min-h-\\[42px\\]');
@@ -390,7 +386,7 @@ test('Watchtower Cockpit shows the severity spectrum and no Slice 6 placeholders
   await expect(livenessLane).toContainText('.liv ended');
   await expect(livenessLane).toContainText(/(?:59m|1h 0m) since last source write/);
 
-  await expect(page.getByText('Start the Flue engine and Claude Source Adapter.')).toHaveCount(0);
+  await expect(page.getByText('Start the Flue engine and a Source Adapter (Claude, Codex, or Pi).')).toHaveCount(0);
   await expect(page.getByText('Waiting for source activity')).toHaveCount(0);
   await expect(page.getByText('judge lands in Slice 6')).toHaveCount(0);
   await expect(page.getByText('judge off')).toHaveCount(0);
@@ -446,7 +442,10 @@ test('Upgrades inbox renders repeated blind spots as proposal-only cards separat
   await expect(upgradesInbox).toContainText('Upgrades inbox');
 
   const upgradeCards = upgradesInbox.getByLabel('Upgrade Card');
-  await expect(upgradeCards).toHaveCount(2);
+  await expect(upgradeCards).toHaveCount(3);
+
+  const tokensCard = upgradeCards.filter({ hasText: 'Claude tokens capability gap' });
+  await expect(tokensCard).toContainText('2 sessions reported tokens unavailable');
 
   const capabilityCard = upgradeCards.filter({ hasText: 'Claude cost capability gap' });
   await expect(capabilityCard).toContainText('2 sessions reported cost unavailable');
