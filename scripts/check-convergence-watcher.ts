@@ -523,6 +523,45 @@ await check('failed validation flips the session to watch and references the fai
   assert.match(onlySession(result).summary.concerns[0] ?? '', /Validation failed/);
 });
 
+await check('successful non-validation tool results do not count as validation evidence', () => {
+  // Claude-shaped tool_use/tool_result pair: `is_error: false` on a plain
+  // `git status` must NOT satisfy the completion claim's evidence bar.
+  const bashCall = (id: string, atMs: number, toolUseId: string, command: string) =>
+    event({
+      id,
+      atMs,
+      kind: 'tool_call',
+      actor: { type: 'agent' },
+      payload: { id, message: { role: 'assistant', content: [{ type: 'tool_use', id: toolUseId, name: 'Bash', input: { command } }] } },
+    });
+  const bashResult = (id: string, atMs: number, toolUseId: string, output: string) =>
+    event({
+      id,
+      atMs,
+      kind: 'tool_result',
+      actor: { type: 'tool', name: 'Bash' },
+      payload: { id, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: toolUseId, is_error: false, content: output }] } },
+    });
+
+  const nonValidation = snapshot([
+    userMessage('goal-pairing-1', 0, 'Ship the watcher only after validation evidence exists.'),
+    bashCall('bash-call-status', 1_000, 'toolu_status', 'git status'),
+    bashResult('bash-result-status', 2_000, 'toolu_status', 'clean tree'),
+    agentMessage('done-unproven', 3_000, 'Done — the watcher is ready to ship.'),
+  ]);
+  assertStatusWithEvidence(nonValidation, 'intervention', 'completion_without_evidence', 'done-unproven');
+
+  // The same shape with a real validation command paired by tool_use_id
+  // (no explicit exitCode/validation payload) DOES count as evidence.
+  const validated = snapshot([
+    userMessage('goal-pairing-2', 0, 'Ship the watcher only after validation evidence exists.'),
+    bashCall('bash-call-test', 1_000, 'toolu_test', 'pnpm test'),
+    bashResult('bash-result-test', 2_000, 'toolu_test', 'all checks passed'),
+    agentMessage('done-proven', 3_000, 'Done — the watcher is ready to ship.'),
+  ]);
+  assert.equal(onlySession(validated).status, 'calm', 'a paired passing validation result satisfies the evidence bar');
+});
+
 await check('hard signals escalate cheap to strong for completion without evidence, repeated failures, and burn spikes', () => {
   const cases: Array<{
     name: string;

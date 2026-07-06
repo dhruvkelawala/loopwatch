@@ -116,7 +116,7 @@ pnpm ingest:check         # integration: adapter → record-events → durable s
 
 ### Cockpit (desktop shell)
 
-The Cockpit is the Watchtower UI ([`ui/`](./ui/)) hosted inside a Tauri desktop shell ([`src-tauri/`](./src-tauri/)), per [ADR-0007](./docs/adr/0007-deployment-shape-flue-node-engine-tauri-shell.md). The shell owns the background observation processes: on launch it spawns `node dist/server.mjs` (the built engine) on port `3583` plus the three Source Adapters (`node dist/adapter-{claude,codex,pi}.mjs`), and on quit it stops every child. Disable any adapter with `LOOPWATCH_{CLAUDE,CODEX,PI}_ADAPTER=0`.
+The Cockpit is the Watchtower UI ([`ui/`](./ui/)) hosted inside a Tauri desktop shell ([`src-tauri/`](./src-tauri/)), per [ADR-0007](./docs/adr/0007-deployment-shape-flue-node-engine-tauri-shell.md). The shell owns the background observation processes: on launch it generates a per-run engine bearer token, spawns `node dist/server.mjs` (the built engine) plus a single supervised Source Adapters child (`node dist/adapter-sources.mjs`, hosting the Claude, Codex, and Pi adapters), and on quit it stops every child. Disable one source with `LOOPWATCH_{CLAUDE,CODEX,PI}_ADAPTER=0` (handled inside the adapters child), or the whole child with `LOOPWATCH_SOURCE_ADAPTERS=0`.
 
 Run the Slice 5 live Cockpit proof (fixture Claude transcript → adapter → Flue runs → Cockpit projection):
 
@@ -145,7 +145,9 @@ Lifecycle on macOS:
 
 Environment overrides for supervised children:
 
-- `LOOPWATCH_NODE_BIN` — Node binary used to run the engine and Claude adapter (default `node`).
-- `LOOPWATCH_CLAUDE_ADAPTER=0` — disable Claude adapter supervision for diagnostics.
+- `LOOPWATCH_NODE_BIN` — Node binary used to run the engine and the source adapters (default `node`).
+- `LOOPWATCH_SOURCE_ADAPTERS=0` — disable all source-adapter supervision for diagnostics.
+- `LOOPWATCH_CLAUDE_ADAPTER=0` / `LOOPWATCH_CODEX_ADAPTER=0` / `LOOPWATCH_PI_ADAPTER=0` — disable a single source.
+- `LOOPWATCH_ENGINE_PORT` / `LOOPWATCH_ENGINE_TOKEN` — pin the engine port/token instead of the launch defaults.
 
-The engine port is fixed at `3583`; the packaged webview's base URL and the CSP `connect-src` are pinned to it.
+In dev the engine listens on `3583`; release launches reserve an ephemeral loopback port. The webview learns the engine base URL and bearer token from `window.__LOOPWATCH_ENGINE_CONFIG__`, injected by the shell before the page loads.

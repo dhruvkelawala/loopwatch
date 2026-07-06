@@ -29,15 +29,26 @@ declare global {
   }
 }
 
+/**
+ * Never throws: the cockpit must render even when the runtime config is
+ * missing or malformed, so any failure here degrades to the default base URL
+ * (with a console error) instead of rejecting the module-level await in
+ * main.tsx and leaving a blank window.
+ */
 export async function loadEngineRuntime(): Promise<EngineRuntime> {
-  const fromWindow = parseWindowRuntime(window.__LOOPWATCH_ENGINE_CONFIG__);
-  if (fromWindow) return fromWindow;
+  try {
+    const fromWindow = parseWindowRuntime(window.__LOOPWATCH_ENGINE_CONFIG__);
+    if (fromWindow) return fromWindow;
 
-  const fromFile = await loadRuntimeFile();
-  return {
-    flueBaseUrl: fromFile?.flueBaseUrl ?? defaultFlueBaseUrl(),
-    bearerToken: fromFile?.bearerToken,
-  };
+    const fromFile = await loadRuntimeFile();
+    return {
+      flueBaseUrl: fromFile?.flueBaseUrl ?? defaultFlueBaseUrl(),
+      bearerToken: fromFile?.bearerToken,
+    };
+  } catch (error) {
+    console.error('[loopwatch] failed to load engine runtime config, falling back to defaults', error);
+    return { flueBaseUrl: defaultFlueBaseUrl() };
+  }
 }
 
 export function createEngineFetch(runtime: EngineRuntime): typeof fetch {

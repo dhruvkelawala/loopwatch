@@ -59,9 +59,13 @@ async function waitForServer() {
 
 async function startServer(storageDir: string) {
   const serverEntry = join(process.cwd(), 'dist/server.mjs');
+  // The check probes and ingests tokenless, so the spawned engine must not
+  // inherit a shell-exported LOOPWATCH_ENGINE_TOKEN and start enforcing auth.
+  const { LOOPWATCH_ENGINE_TOKEN: _ignoredEngineToken, ...inherited } = process.env;
+  const env = { ...inherited, PORT: String(port) };
   const child = spawn(process.execPath, [serverEntry], {
     cwd: storageDir,
-    env: { ...process.env, PORT: String(port) },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   child.stdout.on('data', (chunk) => process.stdout.write(`[server] ${chunk}`));

@@ -156,7 +156,7 @@ try {
 
   const activeHead = execFileSync('git', ['-C', activeRepo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 
-  await check('scopes git evidence to active sessions and ignores stale dirty repos', () => {
+  await check('scopes git evidence to active sessions and ignores stale dirty repos', async () => {
     const staleSession = 'stale-inactive-session';
     const staleLastAtMs = nowMs - baseMs - activeAfterMs - 1;
     const events = [
@@ -177,7 +177,7 @@ try {
       agentMessage('scope-done', 16_000, activeRepo, 'Implemented the scoped git watcher.'),
     ];
 
-    const gitEvents = buildScopedGitEvidenceEvents(events, { nowMs, activeAfterMs, timeoutMs: 5_000 });
+    const gitEvents = await buildScopedGitEvidenceEvents(events, { nowMs, activeAfterMs, timeoutMs: 5_000 });
     assert.equal(
       gitEvents.some((event) => gitSnapshotFromEvent(event)?.repoRoot === inactiveRepo),
       false,
@@ -198,7 +198,10 @@ try {
     assert.equal(snapshot.dirty, true);
     assert.deepEqual(snapshot.changedFiles, ['README.md']);
     assert.deepEqual(snapshot.diff, { files: 1, insertions: 1, deletions: 0 });
-    assert.deepEqual(snapshot.head, { sha: activeHead, subject: 'active initial commit', committedAt: commitDate });
+    // git %cI may spell UTC as 'Z' or '+00:00' depending on version — compare instants.
+    assert.equal(snapshot.head?.sha, activeHead);
+    assert.equal(snapshot.head?.subject, 'active initial commit');
+    assert.equal(Date.parse(snapshot.head?.committedAt ?? ''), Date.parse(commitDate));
     assert.deepEqual(snapshot.validation, {
       status: 'failed',
       detail: 'pnpm git:check exited 1',
@@ -206,7 +209,7 @@ try {
     });
   });
 
-  await check('keeps validation evidence session-specific when active sessions share a repo', () => {
+  await check('keeps validation evidence session-specific when active sessions share a repo', async () => {
     const failedSession = 'same-repo-validation-failed';
     const passedSession = 'same-repo-validation-passed';
     const events = [
@@ -220,7 +223,7 @@ try {
       agentMessage('same-repo-passed-done', 16_500, activeRepo, 'Done — validation passed.', passedSession),
     ];
 
-    const gitEvents = buildScopedGitEvidenceEvents(events, { nowMs, activeAfterMs, timeoutMs: 5_000 });
+    const gitEvents = await buildScopedGitEvidenceEvents(events, { nowMs, activeAfterMs, timeoutMs: 5_000 });
     assert.equal(gitEvents.length, 2, 'same-repo active sessions should each emit git evidence');
 
     const snapshotsBySession = new Map<string, GitEvidenceSnapshot>();
@@ -245,14 +248,14 @@ try {
     });
   });
 
-  await check('dirty git evidence backs completion-without-proof convergence intervention', () => {
+  await check('dirty git evidence backs completion-without-proof convergence intervention', async () => {
     const events = [
       sessionStart(activeRepo, 'dirty-no-proof'),
       userMessage('dirty-goal', 1_000, activeRepo, 'Finish Slice 10 with proof.', 'dirty-no-proof'),
       validationResult('dirty-validation-failed', 7_000, activeRepo, 'pnpm git:check', 1, 'dirty-no-proof'),
       agentMessage('dirty-done', 16_000, activeRepo, 'Done — the scoped git watcher is complete.', 'dirty-no-proof'),
     ];
-    const gitEvents = buildScopedGitEvidenceEvents(events, { nowMs, activeAfterMs, timeoutMs: 5_000 });
+    const gitEvents = await buildScopedGitEvidenceEvents(events, { nowMs, activeAfterMs, timeoutMs: 5_000 });
     const { event: gitEvent, snapshot } = onlyGitSnapshot(gitEvents);
     assert.equal(snapshot.validation.status, 'failed');
 
@@ -272,14 +275,14 @@ try {
     assert.match(dirtyCompletion.detail, /files: README\.md/);
   });
 
-  await check('passing validation is reflected in git evidence and suppresses dirty-no-proof intervention', () => {
+  await check('passing validation is reflected in git evidence and suppresses dirty-no-proof intervention', async () => {
     const events = [
       sessionStart(activeRepo, 'passing-validation'),
       userMessage('passing-goal', 1_000, activeRepo, 'Finish Slice 10 with proof.', 'passing-validation'),
       validationResult('passing-validation-ok', 12_000, activeRepo, 'pnpm git:check', 0, 'passing-validation'),
       agentMessage('passing-done', 16_000, activeRepo, 'Complete — pnpm git:check passes.', 'passing-validation'),
     ];
-    const gitEvents = buildScopedGitEvidenceEvents(events, { nowMs, activeAfterMs, timeoutMs: 5_000 });
+    const gitEvents = await buildScopedGitEvidenceEvents(events, { nowMs, activeAfterMs, timeoutMs: 5_000 });
     const { snapshot } = onlyGitSnapshot(gitEvents);
     assert.deepEqual(snapshot.validation, {
       status: 'passed',

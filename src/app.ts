@@ -85,7 +85,7 @@ app.get('/loopwatch/convergence', async (c) => {
   const runs = await buildLoopwatchRunIndex(parsed.data.limit, parsed.data.scanLimit);
   const eventGroups = await Promise.all(runs.map((run) => recordedEventsForRun(run)));
   const recordedEvents = eventGroups.flat();
-  const gitEvents = buildScopedGitEvidenceEvents(recordedEvents, { nowMs, activeAfterMs: config.idleAfterMs });
+  const gitEvents = await buildScopedGitEvidenceEvents(recordedEvents, { nowMs, activeAfterMs: config.idleAfterMs, cacheTtlMs: 1_500 });
   const library = await loadLoopLibrary();
   const snapshot = buildConvergenceSnapshot([...recordedEvents, ...gitEvents], { ...config, pivotMode: parsed.data.pivotMode ?? config.pivotMode, nowMs, loopAnchoring: { loops: library.loops } });
 

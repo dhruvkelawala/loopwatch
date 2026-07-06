@@ -283,14 +283,37 @@ struct ConvergencePayload {
     sessions: Vec<PulseSession>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PulseSummary {
+    #[serde(default)]
+    goal: String,
+}
+
+/// Mirrors the engine's `SessionConvergenceState` (src/convergence.ts) — only
+/// the fields Pulse needs. Extra payload fields are ignored; `summary` is
+/// defaulted so a lean payload still deserializes.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PulseSession {
     id: String,
-    title: String,
+    #[serde(default)]
+    summary: PulseSummary,
     status: String,
     liveness: String,
     evidence: Vec<PulseEvidence>,
+}
+
+impl PulseSession {
+    /// Human-facing session title for notifications: the running-summary goal,
+    /// falling back to the session id when no goal has been observed yet.
+    fn display_title(&self) -> String {
+        if self.summary.goal.trim().is_empty() {
+            self.id.clone()
+        } else {
+            self.summary.goal.clone()
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -373,7 +396,7 @@ pub fn notification_candidates(sessions: &[PulseSession]) -> Vec<InterventionNot
                 .map(|evidence| InterventionNotice {
                     key: format!("{}:{}:{}", session.id, evidence.event_id, evidence.signal),
                     session_id: session.id.clone(),
-                    session_title: session.title.clone(),
+                    session_title: session.display_title(),
                     title: evidence.title.clone(),
                     detail: evidence.detail.clone(),
                 })
@@ -453,7 +476,7 @@ mod tests {
     ) -> PulseSession {
         PulseSession {
             id: id.to_owned(),
-            title: title.to_owned(),
+            summary: PulseSummary { goal: title.to_owned() },
             status: status.to_owned(),
             liveness: liveness.to_owned(),
             evidence,
@@ -504,6 +527,48 @@ mod tests {
             .schedule_raw(delivery_time)?;
 
         Ok(())
+    }
+
+    #[test]
+    fn pulse_session_deserializes_real_engine_convergence_payload() {
+        // Shape mirrors src/app.ts `c.json({ ok: true, ...snapshot })` with
+        // src/convergence.ts `SessionConvergenceState` sessions — no `title`
+        // field exists there, only `summary.goal`.
+        let payload: ConvergencePayload = serde_json::from_str(
+            r#"{
+                "ok": true,
+                "nextPollMs": 2000,
+                "spend": {"judgeCalls": 0},
+                "sessions": [{
+                    "id": "claude:s1",
+                    "source": "claude",
+                    "sessionId": "s1",
+                    "status": "intervention",
+                    "liveness": "active",
+                    "summary": {"goal": "ship the fix", "done": [], "validation": [], "concerns": []},
+                    "evidence": [{
+                        "eventId": "e1",
+                        "severity": "intervention",
+                        "signal": "completion_without_evidence",
+                        "title": "Completion without evidence",
+                        "detail": "claimed done with no validation",
+                        "recommendedAction": "run the tests"
+                    }],
+                    "judge": {"lastJudgedEventCount": 0},
+                    "spend": {"judgeCalls": 0},
+                    "eventCount": 3,
+                    "meaningfulEventCount": 2,
+                    "lastEventAt": "2026-07-04T11:00:00.000Z"
+                }]
+            }"#,
+        )
+        .expect("engine convergence payload must deserialize");
+
+        assert_eq!(payload.sessions.len(), 1);
+        assert_eq!(payload.sessions[0].display_title(), "ship the fix");
+        let notices = notification_candidates(&payload.sessions);
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].session_title, "ship the fix");
     }
 
     #[test]

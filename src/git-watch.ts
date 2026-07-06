@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { basename } from 'node:path';
+import { promisify } from 'node:util';
 
 import { sessionKey, type EventContext, type LoopwatchEvent } from './events.js';
 
@@ -42,54 +43,68 @@ export interface ScopedGitWatcherConfig {
   nowMs?: number;
   activeAfterMs?: number;
   timeoutMs?: number;
+  /**
+   * Reuse repo snapshots (and cwd→root resolutions) across calls for this many
+   * ms of wall-clock time. `0` (default) disables reuse — deterministic checks
+   * mutate fixture repos between calls and must observe every change. The
+   * convergence endpoint sets this to skip re-running the git chain on every
+   * 2s UI poll.
+   */
+  cacheTtlMs?: number;
 }
 
 const DEFAULT_ACTIVE_AFTER_MS = 5 * 60_000;
 const DEFAULT_GIT_TIMEOUT_MS = 2_000;
+
+const execFileAsync = promisify(execFile);
+const rootByCwd = new Map<string, { root: string | undefined; expiresAtMs: number }>();
+const snapshotByRoot = new Map<string, { snapshot: GitRepositorySnapshot | null; expiresAtMs: number }>();
 const validationCommandPattern = /\b(test|verify|lint|typecheck|tsc|build|cargo\s+test|go\s+test|pytest|vitest|jest|playwright|cypress|harness|check)\b/i;
 
-export function buildScopedGitEvidenceEvents(events: LoopwatchEvent[], config: ScopedGitWatcherConfig = {}): LoopwatchEvent[] {
+export async function buildScopedGitEvidenceEvents(events: LoopwatchEvent[], config: ScopedGitWatcherConfig = {}): Promise<LoopwatchEvent[]> {
   const nowMs = config.nowMs ?? Date.now();
   const activeAfterMs = config.activeAfterMs ?? DEFAULT_ACTIVE_AFTER_MS;
   const timeoutMs = config.timeoutMs ?? DEFAULT_GIT_TIMEOUT_MS;
-  const snapshotsByRoot = new Map<string, GitRepositorySnapshot | null>();
-  const evidence: LoopwatchEvent[] = [];
+  const cacheTtlMs = config.cacheTtlMs ?? 0;
+  const snapshotsByRoot = new Map<string, Promise<GitRepositorySnapshot | null>>();
 
-  for (const [id, sessionEvents] of groupBySession(events)) {
-    const ordered = sessionEvents.filter((event) => event.kind !== 'git').sort(compareEvents);
-    const last = ordered.at(-1);
-    if (!last || !sessionIsActive(last, nowMs, activeAfterMs)) continue;
+  const evidence = await Promise.all(
+    [...groupBySession(events)].map(async ([id, sessionEvents]): Promise<LoopwatchEvent | undefined> => {
+      const ordered = sessionEvents.filter((event) => event.kind !== 'git').sort(compareEvents);
+      const last = ordered.at(-1);
+      if (!last || !sessionIsActive(last, nowMs, activeAfterMs)) return undefined;
 
-    const cwd = latestString(ordered, (event) => event.context?.cwd);
-    if (!cwd) continue;
+      const cwd = latestString(ordered, (event) => event.context?.cwd);
+      if (!cwd) return undefined;
 
-    const repoRoot = resolveGitRoot(cwd, timeoutMs);
-    if (!repoRoot) continue;
+      const repoRoot = await resolveGitRoot(cwd, timeoutMs, cacheTtlMs);
+      if (!repoRoot) return undefined;
 
-    const repoSnapshot = cachedGitSnapshot(repoRoot, snapshotsByRoot, timeoutMs, new Date(nowMs).toISOString());
-    if (!repoSnapshot) continue;
+      const repoSnapshot = await cachedGitSnapshot(repoRoot, snapshotsByRoot, timeoutMs, new Date(nowMs).toISOString(), cacheTtlMs);
+      if (!repoSnapshot) return undefined;
 
-    const snapshot: GitEvidenceSnapshot = {
-      ...repoSnapshot,
-      validation: validationSummaryForSession(ordered),
-    };
+      const snapshot: GitEvidenceSnapshot = {
+        ...repoSnapshot,
+        validation: validationSummaryForSession(ordered),
+      };
 
-    const context: EventContext = { cwd: snapshot.repoRoot, repo: snapshot.repo, gitBranch: snapshot.branch };
-    evidence.push({
-      source: last.source,
-      sessionId: last.sessionId,
-      timestamp: snapshot.sampledAt,
-      kind: 'git',
-      actor: { type: 'system', name: 'loopwatch-git-watcher' },
-      context,
-      payload: {
-        id: gitEvidenceId(id, snapshot),
-        git: snapshot,
-      },
-    });
-  }
+      const context: EventContext = { cwd: snapshot.repoRoot, repo: snapshot.repo, gitBranch: snapshot.branch };
+      return {
+        source: last.source,
+        sessionId: last.sessionId,
+        timestamp: snapshot.sampledAt,
+        kind: 'git',
+        actor: { type: 'system', name: 'loopwatch-git-watcher' },
+        context,
+        payload: {
+          id: gitEvidenceId(id, snapshot),
+          git: snapshot,
+        },
+      };
+    }),
+  );
 
-  return evidence;
+  return evidence.filter((event): event is LoopwatchEvent => event !== undefined);
 }
 
 export function gitSnapshotFromEvent(event: LoopwatchEvent): GitEvidenceSnapshot | undefined {
@@ -136,26 +151,38 @@ export function gitSnapshotFromEvent(event: LoopwatchEvent): GitEvidenceSnapshot
 
 function cachedGitSnapshot(
   repoRoot: string,
-  snapshotsByRoot: Map<string, GitRepositorySnapshot | null>,
+  snapshotsByRoot: Map<string, Promise<GitRepositorySnapshot | null>>,
   timeoutMs: number,
   sampledAt: string,
-): GitRepositorySnapshot | null {
-  let snapshot = snapshotsByRoot.get(repoRoot);
-  if (snapshot === undefined) {
-    snapshot = readGitSnapshot(repoRoot, timeoutMs, sampledAt);
-    snapshotsByRoot.set(repoRoot, snapshot);
+  cacheTtlMs: number,
+): Promise<GitRepositorySnapshot | null> {
+  let pending = snapshotsByRoot.get(repoRoot);
+  if (pending === undefined) {
+    if (cacheTtlMs > 0) {
+      const cached = snapshotByRoot.get(repoRoot);
+      if (cached && cached.expiresAtMs > Date.now()) return Promise.resolve(cached.snapshot);
+    }
+    pending = readGitSnapshot(repoRoot, timeoutMs, sampledAt).then((snapshot) => {
+      if (cacheTtlMs > 0) snapshotByRoot.set(repoRoot, { snapshot, expiresAtMs: Date.now() + cacheTtlMs });
+      return snapshot;
+    });
+    snapshotsByRoot.set(repoRoot, pending);
   }
-  return snapshot;
+  return pending;
 }
 
-function readGitSnapshot(repoRoot: string, timeoutMs: number, sampledAt: string): GitRepositorySnapshot | null {
-  const statusOutput = git(repoRoot, ['status', '--porcelain=v1'], timeoutMs);
+async function readGitSnapshot(repoRoot: string, timeoutMs: number, sampledAt: string): Promise<GitRepositorySnapshot | null> {
+  const [statusOutput, diffOutput, branchOutput, head] = await Promise.all([
+    git(repoRoot, ['status', '--porcelain=v1'], timeoutMs),
+    git(repoRoot, ['diff', '--shortstat', 'HEAD', '--'], timeoutMs),
+    git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'], timeoutMs),
+    readHead(repoRoot, timeoutMs),
+  ]);
   if (statusOutput === undefined) return null;
 
   const changedFiles = parseChangedFiles(statusOutput);
-  const diff = parseShortStat(git(repoRoot, ['diff', '--shortstat', 'HEAD', '--'], timeoutMs) ?? '');
-  const branch = git(repoRoot, ['rev-parse', '--abbrev-ref', 'HEAD'], timeoutMs)?.trim() || 'branch unavailable';
-  const head = readHead(repoRoot, timeoutMs);
+  const diff = parseShortStat(diffOutput ?? '');
+  const branch = branchOutput?.trim() || 'branch unavailable';
 
   return {
     repoRoot,
@@ -173,24 +200,30 @@ function readGitSnapshot(repoRoot: string, timeoutMs: number, sampledAt: string)
   };
 }
 
-function readHead(repoRoot: string, timeoutMs: number): GitCommitSummary | undefined {
-  const output = git(repoRoot, ['log', '-1', '--format=%H%x00%s%x00%cI'], timeoutMs);
+async function readHead(repoRoot: string, timeoutMs: number): Promise<GitCommitSummary | undefined> {
+  const output = await git(repoRoot, ['log', '-1', '--format=%H%x00%s%x00%cI'], timeoutMs);
   if (!output) return undefined;
   const [sha, subject, committedAt] = output.trim().split('\0');
   return sha && subject && committedAt ? { sha, subject, committedAt } : undefined;
 }
 
-function resolveGitRoot(cwd: string, timeoutMs: number): string | undefined {
-  return git(cwd, ['rev-parse', '--show-toplevel'], timeoutMs)?.trim() || undefined;
+async function resolveGitRoot(cwd: string, timeoutMs: number, cacheTtlMs: number): Promise<string | undefined> {
+  if (cacheTtlMs > 0) {
+    const cached = rootByCwd.get(cwd);
+    if (cached && cached.expiresAtMs > Date.now()) return cached.root;
+  }
+  const root = (await git(cwd, ['rev-parse', '--show-toplevel'], timeoutMs))?.trim() || undefined;
+  if (cacheTtlMs > 0) rootByCwd.set(cwd, { root, expiresAtMs: Date.now() + cacheTtlMs });
+  return root;
 }
 
-function git(cwd: string, args: string[], timeoutMs: number): string | undefined {
+async function git(cwd: string, args: string[], timeoutMs: number): Promise<string | undefined> {
   try {
-    return execFileSync('git', ['-C', cwd, ...args], {
+    const { stdout } = await execFileAsync('git', ['-C', cwd, ...args], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
       timeout: timeoutMs,
     });
+    return stdout;
   } catch {
     return undefined;
   }
@@ -217,7 +250,8 @@ function numberFromMatch(match: RegExpMatchArray | null): number {
 }
 
 function validationSummaryForSession(events: LoopwatchEvent[]): GitValidationSummary {
-  const validations = events.filter(isValidationEvent);
+  const validationIds = validationToolUseIds(events);
+  const validations = events.filter((event) => isValidationEvent(event, validationIds));
   const latest = validations.at(-1);
   if (!latest) return { status: 'unknown', detail: 'No validation evidence observed for this active session' };
 
@@ -228,12 +262,27 @@ function validationSummaryForSession(events: LoopwatchEvent[]): GitValidationSum
   return { status: 'unknown', detail: compact(command, 140), eventId: eventId(latest) };
 }
 
-function isValidationEvent(event: LoopwatchEvent): boolean {
+/** See convergence.ts: pairs bare tool_results back to a validation command. */
+function validationToolUseIds(events: LoopwatchEvent[]): Set<string> {
+  const ids = new Set<string>();
+  for (const event of events) {
+    for (const block of contentBlocks(event)) {
+      if (block.type !== 'tool_use' || typeof block.id !== 'string') continue;
+      const command = stringValue(recordValue(block.input)?.command) ?? '';
+      if (validationCommandPattern.test(command)) ids.add(block.id);
+    }
+  }
+  return ids;
+}
+
+function isValidationEvent(event: LoopwatchEvent, validationIds: ReadonlySet<string>): boolean {
   const command = commandFromEvent(event) ?? '';
   if (validationCommandPattern.test(command)) return true;
   const payload = recordValue(event.payload);
   if (recordValue(payload?.validation) !== undefined) return true;
-  return validationExitCode(event) !== undefined && contentBlocks(event).some((block) => block.type === 'tool_result');
+  if (validationExitCode(event) === undefined) return false;
+  const resultBlock = contentBlocks(event).find((block) => block.type === 'tool_result');
+  return typeof resultBlock?.tool_use_id === 'string' && validationIds.has(resultBlock.tool_use_id);
 }
 
 function validationExitCode(event: LoopwatchEvent): number | undefined {

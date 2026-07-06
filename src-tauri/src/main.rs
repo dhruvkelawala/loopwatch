@@ -18,9 +18,11 @@ use tauri::{Manager, RunEvent, WindowEvent};
 const DEV_ENGINE_PORT: u16 = 3583;
 const ENGINE_TOKEN_BYTES: usize = 32;
 
-/// Env switches for disabling adapter supervision in local diagnostics.
+/// Env switch for disabling the supervised source-adapters child in local
+/// diagnostics. Per-source switches (`LOOPWATCH_{CLAUDE,CODEX,PI}_ADAPTER`)
+/// are honored inside the Node supervisor (scripts/adapter-sources.ts), which
+/// inherits this process's environment.
 const SOURCE_ADAPTERS_ENV: &str = "LOOPWATCH_SOURCE_ADAPTERS";
-const CLAUDE_ADAPTER_ENV: &str = "LOOPWATCH_CLAUDE_ADAPTER";
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EngineLaunchConfig {
     port: u16,
@@ -121,6 +123,7 @@ fn main() {
                 processes.engine_config.base_url(),
                 processes.engine_config.token.clone(),
             );
+            create_cockpit_window(app, &processes.engine_config)?;
             app.manage(processes);
             alerting::setup_layered_alerting(app, alerting_config)?;
             Ok(())
@@ -210,25 +213,53 @@ fn generate_engine_token() -> Result<String, Box<dyn std::error::Error>> {
     Ok(token)
 }
 
-fn write_runtime_config(
-    project_root: &Path,
+/// Create the Cockpit window with the engine runtime config injected as
+/// `window.__LOOPWATCH_ENGINE_CONFIG__` via an initialization script that runs
+/// before any page script. A disk file cannot carry this config in release
+/// builds: Tauri embeds `frontendDist` into the binary at compile time, so a
+/// `loopwatch-runtime.json` written at launch is invisible to the packaged
+/// webview (and the engine port/token only exist at launch).
+fn create_cockpit_window(
+    app: &tauri::App,
     engine_config: &EngineLaunchConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let body = runtime_config_json(engine_config, cfg!(debug_assertions));
-    for path in runtime_config_paths(project_root) {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::write(path, &body)?;
-    }
+    let init_script = format!(
+        "window.__LOOPWATCH_ENGINE_CONFIG__ = {};",
+        runtime_config_json(engine_config, cfg!(debug_assertions))
+    );
+
+    tauri::WebviewWindowBuilder::new(
+        app,
+        alerting::COCKPIT_WINDOW_LABEL,
+        tauri::WebviewUrl::default(),
+    )
+    .title("Loopwatch Cockpit")
+    .inner_size(1280.0, 760.0)
+    .min_inner_size(760.0, 620.0)
+    .initialization_script(&init_script)
+    .build()?;
+
     Ok(())
 }
 
-fn runtime_config_paths(project_root: &Path) -> [PathBuf; 2] {
-    [
+/// Older builds wrote the engine token into `ui/{dist,public}/loopwatch-runtime.json`.
+/// Remove any leftovers so a stale token file is never served by the Vite dev
+/// server or embedded into a later `ui:build`. Best-effort: a missing file or
+/// read-only tree must not block launch.
+fn remove_stale_runtime_config(project_root: &Path) {
+    for path in [
         project_root.join("ui/dist/loopwatch-runtime.json"),
         project_root.join("ui/public/loopwatch-runtime.json"),
-    ]
+    ] {
+        if let Err(error) = fs::remove_file(&path) {
+            if error.kind() != io::ErrorKind::NotFound {
+                eprintln!(
+                    "[loopwatch] failed to remove stale runtime config {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
 }
 
 fn runtime_config_json(engine_config: &EngineLaunchConfig, use_vite_proxy: bool) -> String {
@@ -237,38 +268,17 @@ fn runtime_config_json(engine_config: &EngineLaunchConfig, use_vite_proxy: bool)
     } else {
         engine_config.base_url()
     };
-    format!(
-        "{{\"baseUrl\":{},\"bearerToken\":{}}}",
-        json_string(&base_url),
-        json_string(&engine_config.token)
-    )
-}
-
-fn json_string(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len() + 2);
-    escaped.push('"');
-    for ch in value.chars() {
-        match ch {
-            '"' => escaped.push_str("\\\""),
-            '\\' => escaped.push_str("\\\\"),
-            '\n' => escaped.push_str("\\n"),
-            '\r' => escaped.push_str("\\r"),
-            '\t' => escaped.push_str("\\t"),
-            ch if ch < ' ' => {
-                write!(&mut escaped, "\\u{:04x}", ch as u32)
-                    .expect("writing to String cannot fail");
-            }
-            ch => escaped.push(ch),
-        }
-    }
-    escaped.push('"');
-    escaped
+    serde_json::json!({
+        "baseUrl": base_url,
+        "bearerToken": engine_config.token,
+    })
+    .to_string()
 }
 
 fn spawn_background_processes() -> Result<BackgroundProcesses, Box<dyn std::error::Error>> {
     let project_root = project_root()?;
     let engine_config = build_engine_launch_config()?;
-    write_runtime_config(&project_root, &engine_config)?;
+    remove_stale_runtime_config(&project_root);
     let mut engine = spawn_flue_engine(&project_root, &engine_config)?;
     let source_adapters = match spawn_source_adapters(&project_root, &engine_config) {
         Ok(adapter) => adapter,
@@ -371,13 +381,7 @@ fn spawn_source_adapters(
 }
 
 fn source_adapters_enabled() -> bool {
-    if let Ok(value) = env::var(SOURCE_ADAPTERS_ENV) {
-        return !matches!(
-            value.to_ascii_lowercase().as_str(),
-            "0" | "false" | "off" | "no"
-        );
-    }
-    match env::var(CLAUDE_ADAPTER_ENV) {
+    match env::var(SOURCE_ADAPTERS_ENV) {
         Ok(value) => !matches!(
             value.to_ascii_lowercase().as_str(),
             "0" | "false" | "off" | "no"

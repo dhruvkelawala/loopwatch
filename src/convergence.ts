@@ -210,7 +210,8 @@ function buildSessionConvergence(
   config: ConvergenceConfig,
 ): SessionConvergenceState {
   const orderedEvents = [...events].sort(compareEvents);
-  const meaningfulEvents = orderedEvents.filter(isMeaningfulEvent);
+  const meaningfulValidationIds = validationToolUseIds(orderedEvents);
+  const meaningfulEvents = orderedEvents.filter((event) => isMeaningfulEvent(event, meaningfulValidationIds));
   const baseSummary = summarizeSession(orderedEvents);
   const pivotNudge = detectPivotNudge(orderedEvents, config, baseSummary.goal);
   const summary = pivotNudge ? { ...baseSummary, goal: pivotNudge.toGoal } : baseSummary;
@@ -280,8 +281,9 @@ function buildSessionConvergence(
 
 function judgeSession(summary: RunningSummary, events: LoopwatchEvent[], config: ConvergenceConfig, loop?: LoopAnchor): { status: ConvergenceStatus; evidence: ConvergenceEvidenceRef[]; requiresStrongModel: boolean; reason: string } {
   const evidence: ConvergenceEvidenceRef[] = [];
-  const failedValidations = events.filter((event) => isValidationEvent(event) && validationExitCode(event) !== undefined && validationExitCode(event) !== 0);
-  const successfulValidations = events.filter((event) => isValidationEvent(event) && validationExitCode(event) === 0);
+  const validationIds = validationToolUseIds(events);
+  const failedValidations = events.filter((event) => isValidationEvent(event, validationIds) && validationExitCode(event) !== undefined && validationExitCode(event) !== 0);
+  const successfulValidations = events.filter((event) => isValidationEvent(event, validationIds) && validationExitCode(event) === 0);
   const requiredValidationEvidenceFound = requiredValidationEvidenceObserved(successfulValidations, loop);
   const completionClaim = [...events].reverse().find((event) => event.kind === 'message' && event.actor.type === 'agent' && completionPattern.test(textFromEvent(event) ?? ''));
   const driftEvent = events.find((event) => event.kind === 'message' && event.actor.type === 'agent' && driftPattern.test(textFromEvent(event) ?? ''));
@@ -354,12 +356,13 @@ function summarizeSession(events: LoopwatchEvent[]): RunningSummary {
   const done: string[] = [];
   const validation: string[] = [];
 
+  const validationIds = validationToolUseIds(events);
   for (const event of events) {
     const text = textFromEvent(event);
     const command = commandFromEvent(event);
     if (event.kind === 'message' && event.actor.type === 'agent' && text) done.push(compact(text, 180));
     if (event.kind === 'tool_call' && command) done.push(compact(command, 180));
-    if (isValidationEvent(event)) validation.push(validationSummary(event));
+    if (isValidationEvent(event, validationIds)) validation.push(validationSummary(event));
   }
 
   return {
@@ -658,10 +661,10 @@ function judgeRateCapAllows(memory: ConvergenceWatcherMemory, nowMs: number, rat
   return memory.lastJudgedAtMs === undefined || nowMs - memory.lastJudgedAtMs >= rateCapMs;
 }
 
-function isMeaningfulEvent(event: LoopwatchEvent): boolean {
+function isMeaningfulEvent(event: LoopwatchEvent, validationIds: ReadonlySet<string>): boolean {
   if (event.kind === 'message') return true;
   if (event.kind === 'usage') return true;
-  if (isValidationEvent(event)) return true;
+  if (isValidationEvent(event, validationIds)) return true;
   const command = commandFromEvent(event);
   if (gitSnapshotFromEvent(event)) return true;
   if (command && /^\s*git\s+(commit|diff|status|push)\b/i.test(command)) return true;
@@ -669,12 +672,33 @@ function isMeaningfulEvent(event: LoopwatchEvent): boolean {
   return tool !== undefined && fileToolNames[tool] === true;
 }
 
-function isValidationEvent(event: LoopwatchEvent): boolean {
+/**
+ * `tool_use` block ids whose command matched `validationCommandPattern`.
+ * A bare `tool_result` carries no command, so this pairs it back to the call
+ * that produced it — without the pairing, every successful Bash result
+ * (`is_error: false`) would count as passed validation and suppress the
+ * completion-without-evidence intervention.
+ */
+function validationToolUseIds(events: LoopwatchEvent[]): Set<string> {
+  const ids = new Set<string>();
+  for (const event of events) {
+    for (const block of contentBlocks(event)) {
+      if (block.type !== 'tool_use' || typeof block.id !== 'string') continue;
+      const command = stringValue(recordValue(block.input)?.command) ?? '';
+      if (validationCommandPattern.test(command)) ids.add(block.id);
+    }
+  }
+  return ids;
+}
+
+function isValidationEvent(event: LoopwatchEvent, validationIds: ReadonlySet<string>): boolean {
   const command = commandFromEvent(event) ?? '';
   if (validationCommandPattern.test(command)) return true;
   const payload = payloadRecord(event);
   if (recordValue(payload?.validation) !== undefined) return true;
-  return validationExitCode(event) !== undefined && contentBlocks(event).some((block) => block.type === 'tool_result');
+  if (validationExitCode(event) === undefined) return false;
+  const resultBlock = contentBlocks(event).find((block) => block.type === 'tool_result');
+  return typeof resultBlock?.tool_use_id === 'string' && validationIds.has(resultBlock.tool_use_id);
 }
 
 function isToolResultMessage(event: LoopwatchEvent): boolean {
