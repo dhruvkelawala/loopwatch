@@ -421,6 +421,30 @@ await check('deep analyze with consent includes only redacted transcript snippet
   assertRedactionMarker(packet, 'consented transcript packet');
 });
 
+await check('deep analyze matches events whose stable id lives only in the payload (real adapter shape)', () => {
+  // Normalized adapter events carry no top-level id — the stable id is inside
+  // the preserved native payload, and evidence cards reference that id.
+  const payloadIdEvent: LoopwatchEvent = {
+    source: 'pi',
+    sessionId: 'privacy-session',
+    timestamp: '2026-07-04T12:00:05.000Z',
+    kind: 'tool_result',
+    actor: { type: 'tool', name: 'bash' },
+    payload: { id: 'pi-payload-only-id', message: { role: 'bashExecution', command: 'pnpm check', output: 'ok' } },
+  };
+  const packet = buildPacket(
+    packetInput({
+      deepAnalyzeConsent: true,
+      requestedEvidenceEventId: 'pi-payload-only-id',
+      events: [...events, payloadIdEvent],
+      evidence: [{ ...cardEvidence, eventId: 'pi-payload-only-id' }],
+    }),
+  );
+
+  assert.ok(packet.transcript, 'payload-id deep analyze includes transcript context');
+  assert.deepEqual(payloadIds(packet), ['pi-payload-only-id'], 'transcript context matches the payload-carried event id');
+});
+
 if (failures > 0) {
   console.error(`\n${failures} evidence privacy check(s) failed.`);
   process.exit(1);

@@ -137,8 +137,21 @@ function selectedTranscriptContext(input: BuildEvidencePacketInput): EvidencePac
   };
 }
 
+/**
+ * Mirrors the convergence watcher's event id derivation (convergence.ts
+ * `eventId`): adapter events keep their stable id inside the preserved native
+ * payload, and evidence cards reference that id — a top-level-only read would
+ * never match, leaving consented deep-analyze packets without their selected
+ * transcript context.
+ */
 function eventId(event: LoopwatchEvent): string {
-  return typeof event.id === 'string' && event.id.length > 0 ? event.id : `${event.source}:${event.sessionId}:${event.timestamp}:${event.kind}`;
+  const payload = event.payload && typeof event.payload === 'object' && !Array.isArray(event.payload) ? (event.payload as Record<string, unknown>) : undefined;
+  const record = event as Record<string, unknown>;
+  const candidates = [payload?.id, record.id, record.uuid];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.length > 0) return candidate;
+  }
+  return `${event.source}:${event.sessionId}:${event.timestamp}:${event.kind}`;
 }
 
 function eventSnippet(event: LoopwatchEvent): string {
