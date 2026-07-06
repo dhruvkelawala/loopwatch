@@ -66,7 +66,9 @@ const LIVENESS_IDLE_AFTER_MS = 5 * 60_000;
 const LIVENESS_ENDED_AFTER_MS = 30 * 60_000;
 
 const laneOrder: TimelineLaneName[] = ['request', 'tools', 'files', 'git', 'validation', 'liveness', 'cost', 'convergence'];
-const validationCommandPattern = /\b(test|verify|lint|typecheck|tsc|build|cargo\s+test|go\s+test|pytest|vitest|jest|playwright|cypress)\b/i;
+// Keep in sync with src/validation-evidence.ts so the Cockpit's validation
+// lane agrees with the convergence/git watchers about what counts as proof.
+const validationCommandPattern = /\b(test|verify|lint|typecheck|tsc|build|cargo\s+test|go\s+test|pytest|vitest|jest|playwright|cypress|harness|check)\b/i;
 const fileToolNames = new Set(['read', 'write', 'edit', 'multiedit', 'glob', 'grep', 'ls', 'todowrite']);
 
 export function sessionKey(event: Pick<LoopwatchEvent, 'source' | 'sessionId'>): string {

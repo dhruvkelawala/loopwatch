@@ -74,4 +74,14 @@ process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
 console.log(`[source-adapters] server=${serverUrl} sources=${adapters.length} poll=${pollMs}ms anchor=${initialAnchor}`);
+if (adapters.length === 0) {
+  // Stay alive with zero enabled sources: the Tauri launcher treats an early
+  // child exit as a failed launch and tears the whole app down, and disabling
+  // every source individually is a legitimate diagnostic configuration.
+  console.log('[source-adapters] all sources disabled; supervisor idling');
+  // A pending promise alone does not keep Node alive — hold an event-loop
+  // handle so the process idles until the launcher's SIGTERM.
+  setInterval(() => {}, 60_000);
+  await new Promise(() => {});
+}
 await Promise.all(adapters.map((adapter) => adapter.runForever({ pollMs })));
