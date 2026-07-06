@@ -1,84 +1,69 @@
-import { execFileSync } from 'node:child_process';
-import { basename } from 'node:path';
+import { capabilitiesFor } from '../core/capabilities.js';
+import { gitEnrich, type HeadContext } from '../core/git-context.js';
+import type { LivenessThresholds } from '../core/liveness.js';
+import { TailingAdapter, type IngestFn } from '../core/tailing-adapter.js';
+import { readFirstRecord } from '../core/transcript.js';
+import { mapPiRecord, sessionIdFromPath } from './map.js';
+import { PARSER_VERSION, PI_SESSIONS_ROOT, PI_SOURCE } from './types.js';
 
-import type { IngestFn } from '../jsonl-source-adapter.js';
-import type { LivenessThresholds } from '../claude/liveness.js';
-import { JsonlSourceAdapter } from '../jsonl-source-adapter.js';
-import { lastPiRecordId, mapPiRecord, piSessionIdFromPath } from './map.js';
-import { PI_CURSOR_DIR, PI_SESSIONS_ROOT, PI_SOURCE, type PiRecord } from './types.js';
-
-const GIT_INFERENCE_TIMEOUT_MS = 2_000;
-const gitContextCache = new Map<string, Record<string, unknown>>();
+export type { IngestFn } from '../core/tailing-adapter.js';
+export { httpIngest } from '../core/tailing-adapter.js';
 
 export interface PiAdapterConfig {
   ingest: IngestFn;
+  /** Sessions root. Default `~/.pi/agent/sessions`. */
   root?: string;
+  /** Where session cursors are persisted. Default `data/cursors/pi`. */
   cursorDir?: string;
   thresholds?: LivenessThresholds;
+  /** Where to start a session with no cursor. Default `'end'` (tail new activity). */
   initialAnchor?: 'start' | 'end';
   log?: (message: string, data?: unknown) => void;
 }
 
-export class PiAdapter extends JsonlSourceAdapter<PiRecord> {
+/**
+ * Read the session's cwd from a Pi session head (`session` record `cwd`). Pi
+ * records no git, so repo + branch are left to git inference (ADR-0008).
+ */
+async function readHead(filePath: string): Promise<HeadContext | undefined> {
+  const head = await readFirstRecord(filePath);
+  const cwd = head?.cwd;
+  return typeof cwd === 'string' && cwd.length > 0 ? { cwd } : undefined;
+}
+
+/**
+ * The Pi (SumoCode) Source Adapter (issue #11), a thin instantiation of the
+ * shared {@link TailingAdapter} seam. Pi records a direct `$` cost (in each
+ * assistant message's `usage.cost.total`) but no git branch; the
+ * {@link gitEnrich} hook resolves the session cwd from the `session` head and
+ * infers repo + branch from git (ADR-0008), so a Pi session still gets honest
+ * repo context — the issue's key acceptance criterion.
+ *
+ * Note on Pi's "atomic-rename window" (spike/NOTES.md): Pi briefly drops the
+ * path during a write, which the shared tailer already tolerates via
+ * `statWithRetry` (ENOENT retry). Measured live, Pi appends *in place* — the
+ * session file's inode stays stable across appends — so the core's
+ * inode-change rotation path is not hit on normal Pi writes and the tail reads
+ * only the new bytes past the cursor. Even in the worst case the tail is
+ * deliberately at-least-once (see core/transcript.ts); any duplicate re-emit is
+ * collapsed downstream by the Cockpit's per-record-id dedupe, so no event is
+ * lost or double-counted.
+ */
+export class PiAdapter extends TailingAdapter {
   constructor(config: PiAdapterConfig) {
     super({
       source: PI_SOURCE,
       ingest: config.ingest,
       root: config.root ?? PI_SESSIONS_ROOT,
-      cursorDir: config.cursorDir ?? PI_CURSOR_DIR,
+      cursorDir: config.cursorDir,
+      parserVersion: PARSER_VERSION,
+      mapRecord: mapPiRecord,
+      sessionIdFromPath,
+      enrich: gitEnrich(readHead),
+      capabilities: capabilitiesFor(PI_SOURCE),
       thresholds: config.thresholds,
       initialAnchor: config.initialAnchor,
       log: config.log,
-      mapRecord: mapPiRecord,
-      recordId: lastPiRecordId,
-      sessionIdFromPath: piSessionIdFromPath,
-      inferContext: inferPiContext,
     });
   }
-}
-
-function inferPiContext(records: PiRecord[]): Record<string, unknown> | undefined {
-  const cwd = firstCwd(records);
-  if (!cwd) return undefined;
-  const cached = gitContextCache.get(cwd);
-  if (cached) return { ...cached };
-
-  const context: Record<string, unknown> = { cwd };
-  try {
-    const root = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: GIT_INFERENCE_TIMEOUT_MS,
-    }).trim();
-    if (root) context.repo = basename(root);
-  } catch {
-    context.repo = basename(cwd);
-  }
-
-  try {
-    const branch = execFileSync('git', ['-C', cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: GIT_INFERENCE_TIMEOUT_MS,
-    }).trim();
-    if (branch && branch !== 'HEAD') context.gitBranch = branch;
-  } catch {
-    // Pi does not carry branch in-transcript. Missing branch stays unavailable.
-  }
-
-  gitContextCache.set(cwd, { ...context });
-
-  return context;
-}
-
-function firstCwd(records: PiRecord[]): string | undefined {
-  for (const record of records) {
-    if (typeof record.cwd === 'string' && record.cwd.length > 0) return record.cwd;
-    const worktree = record.worktree;
-    if (worktree && typeof worktree === 'object' && !Array.isArray(worktree)) {
-      const cwd = (worktree as Record<string, unknown>).cwd;
-      if (typeof cwd === 'string' && cwd.length > 0) return cwd;
-    }
-  }
-  return undefined;
 }

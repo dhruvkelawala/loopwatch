@@ -1,4 +1,5 @@
 import type { FlueEvent } from '@flue/sdk';
+import { capabilitiesFor, extractUsage, type Capability } from './cockpit/capabilities.js';
 import { LoopwatchEventSchema, type LoopwatchEvent, type SessionConvergence } from './schemas/loopwatch.js';
 
 export type { LoopwatchEvent, SessionConvergence } from './schemas/loopwatch.js';
@@ -35,11 +36,19 @@ export interface SessionView {
   title: string;
   repo: string;
   branch: string;
+  /** True when the branch was inferred from git, not reported by the source (ADR-0008). */
+  branchInferred: boolean;
   goal: string;
   phase: string;
   severity: Severity;
   liveness: Liveness;
   elapsed: string;
+  /** Declared Source Capabilities — honest badges, no fake parity (ADR-0004). */
+  capabilities: Capability[];
+  /** Total tokens, or null when the source can't provide them (render "unavailable"). */
+  tokens: number | null;
+  /** Direct cost in USD, or null when unavailable. */
+  cost: number | null;
   eventCount: number;
   firstSeen: string;
   lastSeen: string;
@@ -48,7 +57,8 @@ export interface SessionView {
   events: LoopwatchEvent[];
   lanes: TimelineLane[];
   convergence?: SessionConvergence;
-  capabilities: SourceCapabilityBadge[];
+  /** Per-session capability badges with availability evidence (upgrades inbox). */
+  capabilityBadges: SourceCapabilityBadge[];
 }
 
 const RECORDED_EVENT_MESSAGE = 'loopwatch.event.recorded';
@@ -115,21 +125,28 @@ function buildSessionView(id: string, events: LoopwatchEvent[], nowMs: number): 
   const first = events[0];
   const last = events.at(-1) ?? first;
   const title = titleForSession(events);
-  const repo = latestString(events, (event) => event.context?.repo) ?? repoFromCwd(latestString(events, (event) => event.context?.cwd)) ?? 'repo unavailable';
-  const branch = latestString(events, (event) => event.context?.gitBranch) ?? 'branch unavailable';
+  const repo = latestString(events, (event) => event.context?.repo) ?? repoFromCwd(latestString(events, (event) => event.context?.cwd)) ?? 'unknown repo';
+  const branch = latestString(events, (event) => event.context?.gitBranch) ?? 'unknown branch';
+  const branchInferred = branch !== 'unknown branch' && latestBoolean(events, (event) => event.context?.branchInferred);
   const liveness = livenessForEvent(last, nowMs);
+  const rawSource = first?.source ?? 'unknown';
+  const usage = extractUsage(rawSource, events);
 
   return {
     id,
-    source: sourceLabel(first?.source ?? 'unknown'),
+    source: sourceLabel(rawSource),
     title,
     repo,
     branch,
+    branchInferred,
     goal: openingRequest(events) ?? 'No user request recorded yet.',
     phase: phaseForEvent(last),
     severity: 'calm',
     liveness,
     elapsed: elapsedForSession(first, last, liveness, nowMs),
+    capabilities: capabilitiesFor(rawSource),
+    tokens: usage.tokens,
+    cost: usage.cost,
     eventCount: events.length,
     firstSeen: first?.timestamp ?? '',
     lastSeen: last?.timestamp ?? '',
@@ -137,7 +154,7 @@ function buildSessionView(id: string, events: LoopwatchEvent[], nowMs: number): 
     lastEvent: timelineItemForEvent(last).detail,
     events,
     lanes: withLivenessLane(buildTimelineLanes(events), id, last, liveness, nowMs),
-    capabilities: capabilityBadgesForSession(first?.source ?? 'unknown', events),
+    capabilityBadges: capabilityBadgesForSession(first?.source ?? 'unknown', events, usage),
   };
 }
 
@@ -148,12 +165,16 @@ function sourceLabel(source: string): string {
   return source;
 }
 
-function capabilityBadgesForSession(source: string, events: LoopwatchEvent[]): SourceCapabilityBadge[] {
+function capabilityBadgesForSession(
+  source: string,
+  events: LoopwatchEvent[],
+  usage: { tokens: number | null; cost: number | null },
+): SourceCapabilityBadge[] {
   const normalized = source.toLowerCase();
   const hasToolCalls = events.some((event) => event.kind === 'tool_call' || event.kind === 'tool_result');
   const hasBranch = events.some((event) => !!event.context?.gitBranch);
-  const hasCost = events.some((event) => costFromEvent(event) !== undefined);
-  const hasTokens = events.some((event) => tokenCountFromEvent(event) !== undefined);
+  const hasCost = usage.cost !== null;
+  const hasTokens = usage.tokens !== null;
 
   if (normalized === 'claude') {
     return [
@@ -168,7 +189,7 @@ function capabilityBadgesForSession(source: string, events: LoopwatchEvent[]): S
     return [
       capability('transcript', 'transcript', 'available', 'rollout JSONL activity'),
       capability('tool-calls', 'tools', hasToolCalls ? 'available' : 'unavailable', hasToolCalls ? 'tool calls observed' : 'no tool calls observed yet'),
-      capability('tokens', 'tokens', 'unavailable', 'Codex usage is not exposed as shared core data'),
+      capability('tokens', 'tokens', hasTokens ? 'available' : 'unavailable', hasTokens ? 'cumulative token_count observed' : 'token usage unavailable in this session'),
       capability('cost', 'cost', 'unavailable', 'Codex cost is unavailable'),
       capability('branch', 'branch', hasBranch ? 'available' : 'unavailable', hasBranch ? 'branch from event context' : 'branch unavailable'),
     ];
@@ -215,6 +236,14 @@ function latestString(events: LoopwatchEvent[], pick: (event: LoopwatchEvent) =>
     if (value && value.length > 0) return value;
   }
   return undefined;
+}
+
+function latestBoolean(events: LoopwatchEvent[], pick: (event: LoopwatchEvent) => unknown): boolean {
+  for (let index = events.length - 1; index >= 0; index--) {
+    const value = pick(events[index]);
+    if (typeof value === 'boolean') return value;
+  }
+  return false;
 }
 
 function repoFromCwd(cwd: string | undefined): string | undefined {
@@ -334,12 +363,22 @@ function textFromEvent(event: LoopwatchEvent): string | undefined {
 
   const native = sourceEnvelopePayload(payload);
   if (typeof payload.content === 'string') return payload.content;
-  const directContent = textFromContent(payload.items) ?? textFromContent(payload.content);
-  if (directContent) return directContent;
+  const message = recordValue(payload.message);
+  const direct = textFromContent(message?.content);
+  if (direct) return direct;
 
-  const message = recordValue(payload.message) ?? (native?.type === 'message' ? native : recordValue(native?.message));
-  const content = message?.content ?? native?.content ?? native?.items;
-  return textFromContent(content);
+  // Codex stores the raw `{ type, payload, timestamp }` envelope, so message
+  // text lives one level deeper: an `event_msg` carries `payload.message` as a
+  // string, a `response_item` message carries `payload.content` blocks
+  // (`input_text` / `output_text`). Unpack it so Codex sessions get real
+  // titles/goals/timeline text rather than the generic fallback.
+  const inner = recordValue(payload.payload);
+  if (inner) {
+    if (typeof inner.message === 'string') return inner.message;
+    const innerText = textFromContent(inner.content);
+    if (innerText) return innerText;
+  }
+  return undefined;
 }
 
 function textFromContent(content: unknown): string | undefined {
@@ -362,9 +401,22 @@ function textFromContent(content: unknown): string | undefined {
   return parts.filter(Boolean).join('\n') || undefined;
 }
 
+/**
+ * Tool name across sources: Claude `tool_use` blocks, Pi `toolCall` blocks /
+ * `bashExecution`, and Codex `function_call` / `custom_tool_call` /
+ * `exec_command_end` envelopes. Without this the advertised `tools` capability
+ * would render as generic "Tool call" for Codex and Pi.
+ */
 function toolNameFromEvent(event: LoopwatchEvent): string | undefined {
-  const block = firstToolUseBlock(event);
-  if (typeof block?.name === 'string') return block.name;
+  const claude = firstToolUseBlock(event);
+  if (typeof claude?.name === 'string') return claude.name;
+
+  const pi = firstPiToolCall(event);
+  if (typeof pi?.name === 'string') return pi.name;
+  if (piBashCommand(event) !== undefined) return 'bash';
+
+  const codex = codexToolInfo(event);
+  if (codex?.name) return codex.name;
 
   const payload = payloadRecord(event);
   const native = payload ? sourceEnvelopePayload(payload) : undefined;
@@ -376,29 +428,83 @@ function toolNameFromEvent(event: LoopwatchEvent): string | undefined {
   return undefined;
 }
 
+/** Shell command across sources, used to route git / validation timeline lanes. */
 function bashCommandFromEvent(event: LoopwatchEvent): string | undefined {
-  const block = firstToolUseBlock(event);
-  const input = recordValue(block?.input);
-  if (typeof input?.command === 'string') return input.command;
+  const claudeInput = recordValue(firstToolUseBlock(event)?.input);
+  if (typeof claudeInput?.command === 'string') return claudeInput.command;
 
-  const payload = payloadRecord(event);
-  const native = payload ? sourceEnvelopePayload(payload) : undefined;
-  const tool = recordValue(payload?.tool) ?? recordValue(native?.tool);
-  const args = recordValue(tool?.arguments) ?? recordValue(native?.arguments);
-  if (typeof args?.command === 'string') return args.command;
-  if (typeof tool?.command === 'string') return tool.command;
-  const validation = recordValue(payload?.validation);
-  if (typeof validation?.command === 'string') return validation.command;
+  const piArgs = recordValue(firstPiToolCall(event)?.arguments);
+  if (typeof piArgs?.command === 'string') return piArgs.command;
+  const piBash = piBashCommand(event);
+  if (piBash !== undefined) return piBash;
+
+  const codex = codexToolInfo(event);
+  if (codex?.command) return codex.command;
   return undefined;
 }
 
+function messageContentBlocks(event: LoopwatchEvent): Record<string, unknown>[] {
+  const content = recordValue(payloadRecord(event)?.message)?.content;
+  if (!Array.isArray(content)) return [];
+  return content.map(recordValue).filter((block): block is Record<string, unknown> => block !== undefined);
+}
+
+/** Claude `tool_use` content block. */
 function firstToolUseBlock(event: LoopwatchEvent): Record<string, unknown> | undefined {
-  const payload = payloadRecord(event);
-  const native = payload ? sourceEnvelopePayload(payload) : undefined;
-  const message = recordValue(payload?.message) ?? (native?.type === 'message' ? native : recordValue(native?.message));
-  const content = message?.content ?? native?.content;
-  if (!Array.isArray(content)) return undefined;
-  return content.map(recordValue).find((block) => block?.type === 'tool_use');
+  return messageContentBlocks(event).find((block) => block.type === 'tool_use');
+}
+
+/** Pi `toolCall` content block. */
+function firstPiToolCall(event: LoopwatchEvent): Record<string, unknown> | undefined {
+  return messageContentBlocks(event).find((block) => block.type === 'toolCall');
+}
+
+/** Pi `bashExecution` message command. */
+function piBashCommand(event: LoopwatchEvent): string | undefined {
+  const message = recordValue(payloadRecord(event)?.message);
+  if (message?.role === 'bashExecution' && typeof message.command === 'string') return message.command;
+  return undefined;
+}
+
+/** Codex tool name + command, unpacked from the `{ type, payload }` envelope. */
+function codexToolInfo(event: LoopwatchEvent): { name?: string; command?: string } | undefined {
+  const inner = recordValue(payloadRecord(event)?.payload);
+  if (!inner) return undefined;
+
+  switch (inner.type) {
+    case 'function_call':
+    case 'custom_tool_call':
+    case 'web_search_call': {
+      const name = typeof inner.name === 'string' ? inner.name : undefined;
+      return { name, command: codexCommandFromArguments(inner.arguments) };
+    }
+    case 'exec_command_end': {
+      const command = Array.isArray(inner.command) ? inner.command.filter((part) => typeof part === 'string').join(' ') : undefined;
+      return { name: 'exec', command: command && command.length > 0 ? command : undefined };
+    }
+    case 'patch_apply_end':
+      return { name: 'apply_patch' };
+    default:
+      return undefined;
+  }
+}
+
+/** Codex `function_call` arguments carry the command (a JSON string, or `cmd`/`command`). */
+function codexCommandFromArguments(args: unknown): string | undefined {
+  const fromObject = (value: Record<string, unknown> | undefined): string | undefined => {
+    if (!value) return undefined;
+    if (typeof value.command === 'string') return value.command;
+    if (typeof value.cmd === 'string') return value.cmd;
+    if (Array.isArray(value.cmd)) return value.cmd.filter((part) => typeof part === 'string').join(' ') || undefined;
+    return undefined;
+  };
+
+  if (typeof args !== 'string') return fromObject(recordValue(args));
+  try {
+    return fromObject(recordValue(JSON.parse(args)));
+  } catch {
+    return undefined;
+  }
 }
 
 function payloadRecord(event: LoopwatchEvent): Record<string, unknown> | undefined {
@@ -452,13 +558,36 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 
 function eventFingerprint(event: LoopwatchEvent): string {
   const payload = payloadRecord(event);
-  const native = payload ? sourceEnvelopePayload(payload) : undefined;
-  const uuid =
-    (typeof payload?.uuid === 'string' ? payload.uuid : undefined) ??
-    (typeof payload?.id === 'string' ? payload.id : undefined) ??
-    (typeof native?.id === 'string' ? native.id : undefined);
-  if (uuid) return `${event.source}:${event.sessionId}:${uuid}`;
-  return `${event.source}:${event.sessionId}:${event.timestamp}:${event.kind}:${event.actor.type}:${compact(textFromEvent(event) ?? '', 80)}`;
+  // Prefer a stable native record id: Claude `uuid`, Pi per-record `id`.
+  const uuid = typeof payload?.uuid === 'string' && payload.uuid.length > 0 ? payload.uuid : undefined;
+  if (uuid) return `${event.source}:${event.sessionId}:uuid:${uuid}`;
+  const id = typeof payload?.id === 'string' && payload.id.length > 0 ? payload.id : undefined;
+  if (id) return `${event.source}:${event.sessionId}:id:${id}`;
+  // Codex envelopes carry no per-record id and many share a timestamp, so a
+  // (timestamp, kind, actor, text) key collapses distinct records. Disambiguate
+  // with a stable hash of the raw payload (identical bytes on re-read still
+  // dedupe; distinct records do not).
+  return `${event.source}:${event.sessionId}:${event.timestamp}:${event.kind}:${event.actor.type}:${stableHash(payload)}`;
+}
+
+/** Deterministic 53-bit string hash (cyrb53), stable across re-reads of the same record. */
+function stableHash(value: unknown): string {
+  let text: string;
+  try {
+    text = JSON.stringify(value) ?? '';
+  } catch {
+    text = String(value);
+  }
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
 }
 
 function compareEvents(a: LoopwatchEvent, b: LoopwatchEvent): number {

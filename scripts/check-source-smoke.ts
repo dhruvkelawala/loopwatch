@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import type { IngestFn } from '../src/adapters/jsonl-source-adapter.js';
+import type { IngestFn } from '../src/adapters/core/tailing-adapter.js';
 import { ClaudeAdapter } from '../src/adapters/claude/adapter.js';
 import { CodexAdapter } from '../src/adapters/codex/adapter.js';
 import { PiAdapter } from '../src/adapters/pi/adapter.js';

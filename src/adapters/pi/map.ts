@@ -1,95 +1,94 @@
 import type { ActorType, EventContext, LoopwatchEventInput } from '../../events.js';
-import type { MapRecordOptions } from '../jsonl-source-adapter.js';
+import type { MapContext } from '../core/tailing-adapter.js';
 import { PI_SOURCE, type PiRecord } from './types.js';
 
-function recordValue(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : undefined;
-}
+/**
+ * Map a raw Pi session record to a normalized Loopwatch Event (ADR-0004).
+ *
+ * One record → one event. The typed `type` (and, for messages, `message.role`
+ * + content blocks) decide `kind` + `actor`; the full raw record is preserved
+ * verbatim as `payload` (no-drop), so the UI can read Pi's `usage.cost.total`
+ * without the mapper modeling it. Session identity is `(pi, sessionId)`
+ * (ADR-0003), where the session id is the filename's trailing UUID — per-record
+ * `id` fields are message ids, not the session id.
+ */
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
+const UUID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i;
 
-function actorType(value: unknown): ActorType | undefined {
-  return value === 'user' || value === 'agent' || value === 'tool' || value === 'system' ? value : undefined;
-}
-
-function roleActor(role: unknown): ActorType | undefined {
-  switch (role) {
-    case 'user':
-      return 'user';
-    case 'assistant':
-      return 'agent';
-    case 'tool':
-      return 'tool';
-    case 'system':
-      return 'system';
-    default:
-      return undefined;
-  }
-}
-
-function piEventType(record: PiRecord): string {
-  return stringValue(record.event) ?? stringValue(record.type) ?? 'unknown';
-}
-
-function classify(record: PiRecord): { kind: string; actorType: ActorType } {
-  const eventType = piEventType(record);
-  const nativeActor = actorType(recordValue(record.actor)?.type);
-  const messageRole = roleActor(recordValue(record.message)?.role);
-
-  if (eventType === 'message' || eventType === 'agent.message' || eventType === 'user.message') {
-    return { kind: 'message', actorType: nativeActor ?? messageRole ?? 'agent' };
-  }
-  if (eventType === 'tool_call' || eventType === 'tool.call') return { kind: 'tool_call', actorType: nativeActor ?? 'agent' };
-  if (eventType === 'tool_result' || eventType === 'tool.result' || eventType === 'validation.result') {
-    return { kind: 'tool_result', actorType: nativeActor ?? 'tool' };
-  }
-  if (eventType === 'usage' || eventType === 'model_usage') return { kind: 'usage', actorType: nativeActor ?? 'system' };
-  if (eventType === 'session' || eventType === 'session.started' || eventType === 'session.ended') {
-    return { kind: 'session', actorType: nativeActor ?? 'system' };
-  }
-  if (eventType === 'model_change' || eventType === 'thinking_level_change' || eventType === 'custom') {
-    return { kind: eventType, actorType: nativeActor ?? 'system' };
-  }
-  return { kind: eventType, actorType: nativeActor ?? messageRole ?? 'system' };
-}
-
-export function piSessionIdFromPath(path: string): string {
+/** Derive the session id from a `<timestamp>_<uuid>.jsonl` filename. */
+export function sessionIdFromPath(path: string): string {
   const base = path.split('/').pop() ?? path;
-  const withoutExt = base.endsWith('.jsonl') ? base.slice(0, -'.jsonl'.length) : base;
-  const match = withoutExt.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
-  return match?.[1] ?? (withoutExt || 'unknown-pi-session');
+  const name = base.endsWith('.jsonl') ? base.slice(0, -'.jsonl'.length) : base;
+  const match = name.match(UUID_RE);
+  if (match) return match[1];
+  // No UUID (unexpected): fall back to the part after the last `_`, else the
+  // bare name, so the event still has a non-empty identity.
+  const tail = name.split('_').at(-1);
+  return tail && tail.length > 0 ? tail : name;
 }
 
-export function mapPiRecord(record: PiRecord, options: MapRecordOptions): LoopwatchEventInput {
-  const { kind, actorType } = classify(record);
-  const worktree = recordValue(record.worktree);
-  const inferred = options.inferredContext;
+function contentBlocks(record: PiRecord): Array<Record<string, unknown>> {
+  const content = record.message?.content;
+  if (!Array.isArray(content)) return [];
+  return content.filter((block): block is Record<string, unknown> => !!block && typeof block === 'object');
+}
 
-  const context: EventContext = {};
-  const cwd = stringValue(record.cwd) ?? stringValue(worktree?.cwd) ?? stringValue(inferred?.cwd);
-  const repo = stringValue(inferred?.repo);
-  const branch = stringValue(worktree?.branch) ?? stringValue(inferred?.gitBranch);
-  if (cwd) context.cwd = cwd;
-  if (repo) context.repo = repo;
-  if (branch) context.gitBranch = branch;
+function hasBlockType(record: PiRecord, blockType: string): boolean {
+  return contentBlocks(record).some((block) => block.type === blockType);
+}
+
+/** Decide event kind + actor from the record type and message role. */
+function classify(record: PiRecord): { kind: string; actorType: ActorType } {
+  switch (record.type) {
+    case 'message': {
+      const role = record.message?.role;
+      if (role === 'user') return { kind: 'message', actorType: 'user' };
+      if (role === 'assistant') {
+        // An assistant turn that calls a tool vs. one that just speaks.
+        return hasBlockType(record, 'toolCall')
+          ? { kind: 'tool_call', actorType: 'agent' }
+          : { kind: 'message', actorType: 'agent' };
+      }
+      if (role === 'toolResult' || role === 'bashExecution') return { kind: 'tool_result', actorType: 'tool' };
+      // Unknown role: preserve it as a message from the system actor.
+      return { kind: 'message', actorType: 'system' };
+    }
+    case 'session':
+    case 'compaction':
+      return { kind: 'session', actorType: 'system' };
+    case 'model_change':
+    case 'thinking_level_change':
+    case 'custom':
+    case 'custom_message':
+      // Pi's config/diagnostic stream — its declared `diagnostics` capability.
+      return { kind: 'diagnostic', actorType: 'system' };
+    default:
+      // Unknown/native record type: preserve it verbatim as the kind (ADR-0004).
+      return {
+        kind: typeof record.type === 'string' && record.type.length > 0 ? record.type : 'unknown',
+        actorType: 'system',
+      };
+  }
+}
+
+/** Per-event context. Only the head `session` record carries cwd; git is inferred. */
+function contextFor(record: PiRecord): EventContext {
+  const context: Record<string, unknown> = {};
+  if (typeof record.cwd === 'string') context.cwd = record.cwd;
+  return context as EventContext;
+}
+
+export function mapPiRecord(record: PiRecord, context: MapContext): LoopwatchEventInput {
+  const { kind, actorType } = classify(record);
 
   return {
     source: PI_SOURCE,
-    sessionId: stringValue(record.sessionId) ?? options.fileSessionId ?? 'unknown-pi-session',
-    timestamp: stringValue(record.timestamp) ?? stringValue(record.ts) ?? new Date().toISOString(),
+    sessionId: context.fileSessionId && context.fileSessionId.length > 0 ? context.fileSessionId : 'unknown-session',
+    timestamp: typeof record.timestamp === 'string' ? record.timestamp : new Date().toISOString(),
     kind,
     actor: { type: actorType },
-    context,
+    context: contextFor(record),
+    // Full raw record — the no-drop guarantee. Carries `message.usage.cost`.
     payload: record,
   };
-}
-
-export function lastPiRecordId(records: PiRecord[]): string | null {
-  for (let index = records.length - 1; index >= 0; index--) {
-    const id = stringValue(records[index].id);
-    if (id) return id;
-  }
-  return null;
 }

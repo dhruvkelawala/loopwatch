@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import type { Severity, SessionView } from '../loopwatch-events';
+import { CapabilityBadges, formatCost, formatTokens } from './visual';
 import { healthEndpoint, loopwatchConvergenceEndpoint, loopwatchRunsEndpoint } from './endpoints';
 import type { ConvergenceBridgeState, RunBridgeState } from './live-replay';
 import type { LoopRecommendationState } from './loop-recommendation';
@@ -73,11 +74,34 @@ function currentReadRows(session: SessionView): EvidenceDetail[] {
   return [
     { label: 'source', detail: session.source },
     { label: 'repo', detail: session.repo },
-    { label: 'branch', detail: session.branch },
+    {
+      label: 'branch',
+      detail: session.branchInferred ? (
+        <span>
+          {session.branch} <span className="font-mono text-[10px] text-watch-ink-3">(inferred from git)</span>
+        </span>
+      ) : (
+        session.branch
+      ),
+    },
+    { label: 'capabilities', detail: <CapabilityBadges capabilities={session.capabilities} /> },
+    { label: 'tokens', detail: <UsageValue available={session.capabilities.includes('tokens')} value={session.tokens} render={formatTokens} /> },
+    { label: 'cost', detail: <UsageValue available={session.capabilities.includes('cost')} value={session.cost} render={formatCost} /> },
     { label: 'phase', detail: session.phase },
     { label: 'last event', detail: session.lastEvent },
     { label: 'freshness', detail: session.freshness },
   ];
+}
+
+/**
+ * Honest usage value: an em-dash "unavailable" when the source can't provide it
+ * (ADR-0004 — missing data is never faked), or the formatted value otherwise.
+ */
+function UsageValue({ available, value, render }: { available: boolean; value: number | null; render: (value: number) => string }) {
+  if (!available || value === null) {
+    return <span className="font-mono text-[11px] text-watch-ink-3">unavailable</span>;
+  }
+  return <span className="font-mono text-[11px] text-watch-ink">{render(value)}</span>;
 }
 
 function replayBridgeRows(flueBaseUrl: string, bridgeState: RunBridgeState): EvidenceDetail[] {

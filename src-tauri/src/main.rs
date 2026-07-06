@@ -46,8 +46,9 @@ struct BackgroundProcesses {
 impl BackgroundProcesses {
     /// Stop background children, reaping each process.
     ///
-    /// Safe to call more than once: each child handle is taken out on the first
-    /// call, so later calls (e.g. the `Drop` fallback) become no-ops.
+    /// Safe to call more than once: adapters are drained on the first call and
+    /// the engine handle is taken out, so later calls (e.g. the `Drop`
+    /// fallback) become no-ops.
     fn stop(&self) {
         self.stop_child("Source adapters", &self.source_adapters);
         self.stop_child("Flue engine", &self.engine);

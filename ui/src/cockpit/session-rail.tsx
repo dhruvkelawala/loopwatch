@@ -1,6 +1,6 @@
 import type { SessionView } from '../loopwatch-events';
 import type { SessionGroup } from './session-model';
-import { LivenessPill, StatusPing } from './visual';
+import { CapabilityBadges, LivenessPill, StatusPing, UsageMeter } from './visual';
 
 export function SessionRail({
   groupedSessions,
@@ -45,22 +45,50 @@ export function SessionRail({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-1.5 border-t border-watch-line px-3.5 py-2.5 text-[10.5px] text-watch-ink-3">
-        <span className="mr-0.5 font-mono uppercase tracking-[.1em]">Sources</span>
-        {sources.length === 0 ? (
-          <SourceBadge label="unavailable" />
-        ) : (
-          sources.map((source) => <SourceBadge key={source} label={source} />)
-        )}
-      </div>
+      <SourcesFooter groupedSessions={groupedSessions} />
     </aside>
+  );
+}
+
+/** Honest source roster derived from observed sessions (active / total), no hardcoding. */
+function SourcesFooter({ groupedSessions }: { groupedSessions: SessionGroup[] }) {
+  const counts = new Map<string, { active: number; total: number }>();
+  for (const group of groupedSessions) {
+    for (const session of group.sessions) {
+      const entry = counts.get(session.source) ?? { active: 0, total: 0 };
+      entry.total += 1;
+      if (session.liveness === 'active') entry.active += 1;
+      counts.set(session.source, entry);
+    }
+  }
+  const sources = [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t border-watch-line px-3.5 py-2.5 text-[10.5px] text-watch-ink-3">
+      <span className="font-mono uppercase tracking-[.1em]">Sources</span>
+      {sources.length === 0 ? (
+        <span className="font-mono text-[9px] text-watch-ink-3">none observed</span>
+      ) : (
+        sources.map(([source, { active, total }]) => (
+          <span
+            key={source}
+            className={`rounded-[5px] border px-1.5 py-0.5 font-mono text-[9px] ${
+              active > 0 ? 'border-watch-accent/30 bg-watch-accent/12 text-watch-accent' : 'border-watch-line bg-watch-code text-watch-ink-2'
+            }`}
+            title={`${active} active \u00b7 ${total} total`}
+          >
+            {source} {active > 0 ? `${active} live` : `${total}`}
+          </span>
+        ))
+      )}
+    </div>
   );
 }
 
 function EmptyRail() {
   return (
     <div className="mx-3 mt-3 rounded-[10px] border border-watch-line bg-watch-card p-3 text-[11.5px] leading-[1.6] text-watch-ink-2">
-      Start the Flue engine and Claude Source Adapter. Recorded events will replay here as Agent Sessions.
+      Start the Flue engine and a Source Adapter (Claude, Codex, or Pi). Recorded events will replay here as Agent Sessions.
     </div>
   );
 }
@@ -81,16 +109,16 @@ function SessionRow({ session, selected, onSelect }: { session: SessionView; sel
         <span className="block truncate text-[12.5px] font-medium text-watch-ink">{session.title}</span>
         <span className="mt-0.5 block truncate font-mono text-[10px] text-watch-ink-3">
           {session.source} · {session.repo} · {session.branch}
+          {session.branchInferred ? <span className="text-watch-ink-3" title="branch inferred from git"> ~git</span> : null}
         </span>
         <span className="mt-1 block truncate font-mono text-[10px] text-watch-ink-2">phase · {session.phase} · freshness · {session.freshness}</span>
-        <span className="mt-1 flex flex-wrap gap-1">
-          {session.capabilities.map((capability) => (
-            <CapabilityBadge key={capability.key} label={capability.label} state={capability.state} title={capability.detail} />
-          ))}
+        <span className="mt-1.5 block">
+          <CapabilityBadges capabilities={session.capabilities} />
         </span>
       </span>
       <span className="grid justify-items-end gap-1">
         <span className="font-mono text-[10px] text-watch-ink-2">{session.elapsed}</span>
+        <UsageMeter capabilities={session.capabilities} tokens={session.tokens} cost={session.cost} />
         <LivenessPill liveness={session.liveness} />
       </span>
     </button>

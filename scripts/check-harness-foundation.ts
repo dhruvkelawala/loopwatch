@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 import { newCursor } from '../src/adapters/claude/cursor.js';
 import { mapClaudeRecord, sessionIdFromPath } from '../src/adapters/claude/map.js';
-import { discoverTranscripts, readNewRecords } from '../src/adapters/claude/transcript.js';
+import { discoverTranscripts, readNewRecords } from '../src/adapters/core/transcript.js';
 import { LoopwatchEventSchema } from '../src/events.js';
 import { validateCockpitEngineFixture } from '../tests/support/cockpit-fixture.js';
 import { fixturePath } from '../tests/support/fixtures.js';

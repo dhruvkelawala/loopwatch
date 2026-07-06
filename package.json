@@ -6,7 +6,9 @@
   "scripts": {
     "adapter:claude": "tsx scripts/adapter-claude.ts",
     "adapter:sources": "tsx scripts/adapter-sources.ts",
-    "adapter:build": "esbuild scripts/adapter-sources.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/adapter-sources.mjs && esbuild scripts/adapter-claude.ts --bundle --platform=node --format=esm --target=node22 --outfile=dist/adapter-claude.mjs",
+    "adapter:codex": "tsx scripts/adapter-codex.ts",
+    "adapter:pi": "tsx scripts/adapter-pi.ts",
+    "adapter:build": "esbuild scripts/adapter-sources.ts scripts/adapter-claude.ts scripts/adapter-codex.ts scripts/adapter-pi.ts --bundle --platform=node --format=esm --target=node22 --outdir=dist --out-extension:.js=.mjs",
     "build": "flue build --target node && pnpm adapter:build",
     "dev": "flue dev --target node",
     "ui:dev": "vite --config ui/vite.config.ts",
@@ -15,6 +17,8 @@
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
     "adapter:check": "tsx scripts/check-claude-adapter.ts",
+    "codex:check": "tsx scripts/check-codex-adapter.ts",
+    "pi:check": "tsx scripts/check-pi-adapter.ts",
     "events:check": "tsx scripts/check-normalized-event.ts",
     "source:check": "tsx scripts/check-source-parity.ts",
     "ingest:check": "tsx scripts/check-claude-ingest.ts",
@@ -25,6 +29,7 @@
     "git:check": "tsx scripts/check-scoped-git-watcher.ts",
     "loop:check": "tsx scripts/check-loop-library.ts",
     "alerting:check": "cargo test alerting::tests --manifest-path src-tauri/Cargo.toml",
+    "cockpit:caps:check": "tsx scripts/check-cockpit-capabilities.ts",
     "persistence:check": "tsx scripts/check-flue-persistence.ts",
     "v1:baseline": "tsx scripts/check-v1-baseline.ts",
     "v1:harness": "pnpm harness:fixtures && pnpm harness:source-smoke && pnpm harness:eval:live",
@@ -34,7 +39,7 @@
     "e2e:cockpit": "tsx scripts/run-cockpit-e2e.ts",
     "upgrades:check": "tsx scripts/check-upgrades-inbox.ts",
     "dev:data:reset": "tsx scripts/reset-dev-data.ts",
-    "test": "tsx scripts/check-normalized-event.ts && tsx scripts/check-claude-adapter.ts",
+    "test": "tsx scripts/check-normalized-event.ts && tsx scripts/check-claude-adapter.ts && tsx scripts/check-codex-adapter.ts && tsx scripts/check-pi-adapter.ts && tsx scripts/check-cockpit-capabilities.ts",
     "tsc": "tsc --noEmit"
   },
   "dependencies": {

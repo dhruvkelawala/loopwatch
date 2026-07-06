@@ -22,7 +22,7 @@ function capabilityGapCards(sessions: readonly SessionView[]): UpgradeCard[] {
   const gaps = new Map<string, { source: string; capability: string; details: Set<string>; sessionIds: Set<string> }>();
 
   for (const session of sessions) {
-    for (const capability of session.capabilities) {
+    for (const capability of session.capabilityBadges) {
       if (capability.state !== 'unavailable') continue;
       const key = `${session.source}:${capability.key}`;
       const gap = gaps.get(key) ?? { source: session.source, capability: capability.label, details: new Set(), sessionIds: new Set() };

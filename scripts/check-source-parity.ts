@@ -42,7 +42,7 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 }
 
 function capability(session: SessionView, key: string) {
-  const badge = session.capabilities.find((candidate) => candidate.key === key);
+  const badge = session.capabilityBadges.find((candidate) => candidate.key === key);
   assert.ok(badge, `${session.id} missing ${key} capability badge`);
   return badge;
 }
@@ -147,33 +147,27 @@ try {
 
   const piRecords = [
     {
-      source: 'pi',
-      event: 'session.started',
+      type: 'session',
+      version: 3,
       id: 'pi-parity-0001',
-      sessionId: 'pi-parity-session',
-      ts: '2026-07-04T11:02:00.000Z',
-      actor: { type: 'system', agent: 'pi' },
+      timestamp: '2026-07-04T11:02:00.000Z',
       cwd: piRepo,
     },
     {
-      source: 'pi',
-      event: 'model_usage',
+      type: 'message',
       id: 'pi-parity-0002',
-      sessionId: 'pi-parity-session',
-      ts: '2026-07-04T11:02:04.000Z',
-      actor: { type: 'system', agent: 'pi' },
-      cwd: piRepo,
-      usage: { input: 17, output: 25, cost: { total: 0.0042, currency: 'USD' } },
+      timestamp: '2026-07-04T11:02:04.000Z',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Verifying source parity.' }],
+        usage: { input: 17, output: 25, totalTokens: 42, cost: { total: 0.0042, currency: 'USD' } },
+      },
     },
     {
-      source: 'pi',
-      event: 'validation.result',
+      type: 'message',
       id: 'pi-parity-0003',
-      sessionId: 'pi-parity-session',
-      ts: '2026-07-04T11:02:09.000Z',
-      actor: { type: 'tool', name: 'pnpm' },
-      cwd: piRepo,
-      validation: { command: 'pnpm source:check', exitCode: 0 },
+      timestamp: '2026-07-04T11:02:09.000Z',
+      message: { role: 'bashExecution', command: 'pnpm source:check', output: 'ok' },
     },
   ];
   await writeFile(piTranscript, `${piRecords.map((record) => JSON.stringify(record)).join('\n')}\n`);
@@ -193,7 +187,7 @@ try {
     assert.equal(summary.ingestedEvents, 3, 'all Pi records are emitted');
 
     const events = parseEvents(piIngested);
-    assert.deepEqual(events.map((event) => event.kind), ['session', 'usage', 'tool_result']);
+    assert.deepEqual(events.map((event) => event.kind), ['session', 'message', 'tool_result']);
     for (const event of events) {
       assert.equal(event.source, 'pi');
       assert.equal(event.sessionId, 'pi-parity-session');
@@ -203,7 +197,11 @@ try {
       assert.equal(event.context?.gitBranch, 'source-parity-branch');
     }
     assert.deepEqual(events[1].payload, piRecords[1], 'Pi usage raw record survives unchanged as payload');
-    assert.deepEqual((events[1].payload as Record<string, unknown>).usage, piRecords[1].usage, 'direct Pi token/cost fields remain source-native payload data');
+    assert.deepEqual(
+      (recordValue(events[1].payload)!.message as Record<string, unknown>).usage,
+      piRecords[1].message!.usage,
+      'direct Pi token/cost fields remain source-native payload data',
+    );
   });
 
   const claudeEvent = LoopwatchEventSchema.parse({
@@ -237,12 +235,12 @@ try {
     const codex = sessionBySource(sessions, 'Codex');
     const pi = sessionBySource(sessions, 'Pi');
 
-    assert.equal(codex.branch, 'branch unavailable', 'Codex session with no branch context shows unavailable copy, not blank/fake branch');
+    assert.equal(codex.branch, 'unknown branch', 'Codex session with no branch context shows unavailable copy, not blank/fake branch');
     assert.deepEqual(capability(codex, 'tokens'), {
       key: 'tokens',
       label: 'tokens',
       state: 'unavailable',
-      detail: 'Codex usage is not exposed as shared core data',
+      detail: 'token usage unavailable in this session',
     });
     assert.deepEqual(capability(codex, 'cost'), {
       key: 'cost',

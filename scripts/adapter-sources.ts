@@ -9,7 +9,7 @@ import { DEFAULT_LIVENESS } from '../src/adapters/claude/liveness.js';
 import { CLAUDE_PROJECTS_ROOT } from '../src/adapters/claude/types.js';
 import { CodexAdapter } from '../src/adapters/codex/adapter.js';
 import { CODEX_SESSIONS_ROOT } from '../src/adapters/codex/types.js';
-import { httpIngest } from '../src/adapters/jsonl-source-adapter.js';
+import { httpIngest } from '../src/adapters/core/tailing-adapter.js';
 import { PiAdapter } from '../src/adapters/pi/adapter.js';
 import { PI_SESSIONS_ROOT } from '../src/adapters/pi/types.js';
 
