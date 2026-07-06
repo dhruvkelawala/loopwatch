@@ -1,6 +1,7 @@
 import { gitSnapshotFromEvent, type GitEvidenceSnapshot } from './git-watch.js';
 import { DEFAULT_LOOP_ANCHOR_SCORE_THRESHOLD, STARTER_LOOPS, detectLoop, type Loop } from './loops.js';
 import { sessionKey, type LoopwatchEvent } from './events.js';
+import { commandFromEvent, isValidationEvent, validationCommandPattern, validationExitCode, validationToolUseIds } from './validation-evidence.js';
 
 export type ConvergenceStatus = 'calm' | 'watch' | 'intervention';
 export type ConvergenceLiveness = 'active' | 'idle' | 'ended';
@@ -151,7 +152,6 @@ const MAX_SUMMARY_ITEMS = 5;
 
 const completionPattern = /\b(done|complete(?:d)?|finished|implemented|fixed|shipped|ready)\b/i;
 const driftPattern = /\b(unrelated|different task|off[- ]?track|wrong goal|instead of)\b/i;
-const validationCommandPattern = /\b(test|verify|lint|typecheck|tsc|build|cargo\s+test|go\s+test|pytest|vitest|jest|playwright|cypress|harness|check)\b/i;
 const fileToolNames: Record<string, true> = { edit: true, write: true, multiedit: true, patch: true };
 
 const recommendedActions: Record<ConvergenceSignal, string> = {
@@ -672,48 +672,12 @@ function isMeaningfulEvent(event: LoopwatchEvent, validationIds: ReadonlySet<str
   return tool !== undefined && fileToolNames[tool] === true;
 }
 
-/**
- * `tool_use` block ids whose command matched `validationCommandPattern`.
- * A bare `tool_result` carries no command, so this pairs it back to the call
- * that produced it — without the pairing, every successful Bash result
- * (`is_error: false`) would count as passed validation and suppress the
- * completion-without-evidence intervention.
- */
-function validationToolUseIds(events: LoopwatchEvent[]): Set<string> {
-  const ids = new Set<string>();
-  for (const event of events) {
-    for (const block of contentBlocks(event)) {
-      if (block.type !== 'tool_use' || typeof block.id !== 'string') continue;
-      const command = stringValue(recordValue(block.input)?.command) ?? '';
-      if (validationCommandPattern.test(command)) ids.add(block.id);
-    }
-  }
-  return ids;
-}
-
-function isValidationEvent(event: LoopwatchEvent, validationIds: ReadonlySet<string>): boolean {
-  const command = commandFromEvent(event) ?? '';
-  if (validationCommandPattern.test(command)) return true;
-  const payload = payloadRecord(event);
-  if (recordValue(payload?.validation) !== undefined) return true;
-  if (validationExitCode(event) === undefined) return false;
-  const resultBlock = contentBlocks(event).find((block) => block.type === 'tool_result');
-  return typeof resultBlock?.tool_use_id === 'string' && validationIds.has(resultBlock.tool_use_id);
-}
 
 function isToolResultMessage(event: LoopwatchEvent): boolean {
   if (event.kind !== 'message') return false;
   return contentBlocks(event).some((block) => block.type === 'tool_result');
 }
 
-function validationExitCode(event: LoopwatchEvent): number | undefined {
-  const payload = payloadRecord(event);
-  const direct = numberValue(payload?.exitCode) ?? numberValue(recordValue(payload?.tool)?.exit_code) ?? numberValue(recordValue(payload?.validation)?.exitCode);
-  if (direct !== undefined) return direct;
-  const resultBlock = contentBlocks(event).find((block) => block.type === 'tool_result');
-  if (typeof resultBlock?.is_error === 'boolean') return resultBlock.is_error ? 1 : 0;
-  return undefined;
-}
 
 function validationSummary(event: LoopwatchEvent): string {
   const command = commandFromEvent(event) ?? 'validation result';
@@ -788,19 +752,6 @@ function textFromContent(content: unknown): string | undefined {
   return parts.filter(Boolean).join('\n') || undefined;
 }
 
-function commandFromEvent(event: LoopwatchEvent): string | undefined {
-  const payload = payloadRecord(event);
-  if (typeof payload?.command === 'string') return payload.command;
-  const tool = recordValue(payload?.tool);
-  const argumentsRecord = recordValue(tool?.arguments);
-  if (typeof argumentsRecord?.command === 'string') return argumentsRecord.command;
-  const validation = recordValue(payload?.validation);
-  if (typeof validation?.command === 'string') return validation.command;
-  const toolUse = contentBlocks(event).find((block) => block.type === 'tool_use');
-  const input = recordValue(toolUse?.input);
-  if (typeof input?.command === 'string') return input.command;
-  return undefined;
-}
 
 function toolNameFromEvent(event: LoopwatchEvent): string | undefined {
   const payload = payloadRecord(event);

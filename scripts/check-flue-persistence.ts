@@ -48,8 +48,11 @@ async function waitForServer() {
 }
 
 async function startServer(label: string): Promise<ServerHandle> {
+  // This check probes and posts tokenless, so the spawned engine must not
+  // inherit a shell-exported LOOPWATCH_ENGINE_TOKEN and start enforcing auth.
+  const { LOOPWATCH_ENGINE_TOKEN: _ignoredEngineToken, ...inheritedEnv } = process.env;
   const child = spawn(process.execPath, ['dist/server.mjs'], {
-    env: { ...process.env, PORT: String(port) },
+    env: { ...inheritedEnv, PORT: String(port) },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 

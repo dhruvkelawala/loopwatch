@@ -562,6 +562,72 @@ await check('successful non-validation tool results do not count as validation e
   assert.equal(onlySession(validated).status, 'calm', 'a paired passing validation result satisfies the evidence bar');
 });
 
+await check('Codex and Pi native tool shapes count as validation evidence', () => {
+  // Codex: `function_call` paired to `exec_command_end` by call_id through the
+  // raw `{ type, payload }` envelope the adapter preserves.
+  const codexValidated = snapshot([
+    userMessage('goal-codex-1', 0, 'Ship only after validation evidence exists.'),
+    event({
+      id: 'codex-call-test',
+      atMs: 1_000,
+      kind: 'tool_call',
+      actor: { type: 'agent' },
+      payload: { id: 'codex-call-test', type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: '{"cmd":"pnpm test"}', call_id: 'call_v1' } },
+    }),
+    event({
+      id: 'codex-result-test',
+      atMs: 2_000,
+      kind: 'tool_result',
+      actor: { type: 'tool', name: 'exec' },
+      payload: { id: 'codex-result-test', type: 'event_msg', payload: { type: 'exec_command_end', call_id: 'call_v1', exit_code: 0, aggregated_output: 'all passed' } },
+    }),
+    agentMessage('codex-done', 3_000, 'Done — shipped with passing tests.'),
+  ]);
+  assert.equal(onlySession(codexValidated).status, 'calm', 'Codex exec_command_end exit 0 satisfies the evidence bar');
+
+  // Codex: a successful non-validation command must NOT count.
+  const codexUnproven = snapshot([
+    userMessage('goal-codex-2', 0, 'Ship only after validation evidence exists.'),
+    event({
+      id: 'codex-call-ls',
+      atMs: 1_000,
+      kind: 'tool_call',
+      actor: { type: 'agent' },
+      payload: { id: 'codex-call-ls', type: 'response_item', payload: { type: 'function_call', name: 'exec_command', arguments: '{"cmd":"ls"}', call_id: 'call_v2' } },
+    }),
+    event({
+      id: 'codex-result-ls',
+      atMs: 2_000,
+      kind: 'tool_result',
+      actor: { type: 'tool', name: 'exec' },
+      payload: { id: 'codex-result-ls', type: 'event_msg', payload: { type: 'exec_command_end', call_id: 'call_v2', exit_code: 0 } },
+    }),
+    agentMessage('codex-done-unproven', 3_000, 'Done — shipped.'),
+  ]);
+  assertStatusWithEvidence(codexUnproven, 'intervention', 'completion_without_evidence', 'codex-done-unproven');
+
+  // Pi: toolCall content block paired to a toolResult by toolCallId.
+  const piValidated = snapshot([
+    userMessage('goal-pi-1', 0, 'Ship only after validation evidence exists.'),
+    event({
+      id: 'pi-call-test',
+      atMs: 1_000,
+      kind: 'tool_call',
+      actor: { type: 'agent' },
+      payload: { id: 'pi-call-test', type: 'message', message: { role: 'assistant', content: [{ type: 'toolCall', id: 'pi_call_1', name: 'bash', arguments: { command: 'pnpm test' } }] } },
+    }),
+    event({
+      id: 'pi-result-test',
+      atMs: 2_000,
+      kind: 'tool_result',
+      actor: { type: 'tool', name: 'bash' },
+      payload: { id: 'pi-result-test', type: 'message', message: { role: 'toolResult', toolCallId: 'pi_call_1', isError: false, content: [{ type: 'text', text: 'ok' }] } },
+    }),
+    agentMessage('pi-done', 3_000, 'Done — shipped with passing tests.'),
+  ]);
+  assert.equal(onlySession(piValidated).status, 'calm', 'Pi toolResult paired to a validation toolCall satisfies the evidence bar');
+});
+
 await check('hard signals escalate cheap to strong for completion without evidence, repeated failures, and burn spikes', () => {
   const cases: Array<{
     name: string;

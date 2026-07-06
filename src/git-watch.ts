@@ -4,6 +4,7 @@ import { basename } from 'node:path';
 import { promisify } from 'node:util';
 
 import { sessionKey, type EventContext, type LoopwatchEvent } from './events.js';
+import { commandFromEvent, isValidationEvent, validationExitCode, validationToolUseIds } from './validation-evidence.js';
 
 export interface GitDiffSummary {
   files: number;
@@ -59,7 +60,6 @@ const DEFAULT_GIT_TIMEOUT_MS = 2_000;
 const execFileAsync = promisify(execFile);
 const rootByCwd = new Map<string, { root: string | undefined; expiresAtMs: number }>();
 const snapshotByRoot = new Map<string, { snapshot: GitRepositorySnapshot | null; expiresAtMs: number }>();
-const validationCommandPattern = /\b(test|verify|lint|typecheck|tsc|build|cargo\s+test|go\s+test|pytest|vitest|jest|playwright|cypress|harness|check)\b/i;
 
 export async function buildScopedGitEvidenceEvents(events: LoopwatchEvent[], config: ScopedGitWatcherConfig = {}): Promise<LoopwatchEvent[]> {
   const nowMs = config.nowMs ?? Date.now();
@@ -262,55 +262,9 @@ function validationSummaryForSession(events: LoopwatchEvent[]): GitValidationSum
   return { status: 'unknown', detail: compact(command, 140), eventId: eventId(latest) };
 }
 
-/** See convergence.ts: pairs bare tool_results back to a validation command. */
-function validationToolUseIds(events: LoopwatchEvent[]): Set<string> {
-  const ids = new Set<string>();
-  for (const event of events) {
-    for (const block of contentBlocks(event)) {
-      if (block.type !== 'tool_use' || typeof block.id !== 'string') continue;
-      const command = stringValue(recordValue(block.input)?.command) ?? '';
-      if (validationCommandPattern.test(command)) ids.add(block.id);
-    }
-  }
-  return ids;
-}
 
-function isValidationEvent(event: LoopwatchEvent, validationIds: ReadonlySet<string>): boolean {
-  const command = commandFromEvent(event) ?? '';
-  if (validationCommandPattern.test(command)) return true;
-  const payload = recordValue(event.payload);
-  if (recordValue(payload?.validation) !== undefined) return true;
-  if (validationExitCode(event) === undefined) return false;
-  const resultBlock = contentBlocks(event).find((block) => block.type === 'tool_result');
-  return typeof resultBlock?.tool_use_id === 'string' && validationIds.has(resultBlock.tool_use_id);
-}
 
-function validationExitCode(event: LoopwatchEvent): number | undefined {
-  const payload = recordValue(event.payload);
-  const direct = numberValue(payload?.exitCode) ?? numberValue(recordValue(payload?.tool)?.exit_code) ?? numberValue(recordValue(payload?.validation)?.exitCode);
-  if (direct !== undefined) return direct;
-  const resultBlock = contentBlocks(event).find((block) => block.type === 'tool_result');
-  if (typeof resultBlock?.is_error === 'boolean') return resultBlock.is_error ? 1 : 0;
-  return undefined;
-}
 
-function commandFromEvent(event: LoopwatchEvent): string | undefined {
-  const payload = recordValue(event.payload);
-  if (!payload) return undefined;
-  if (typeof payload.command === 'string') return payload.command;
-  const tool = recordValue(payload.tool);
-  if (typeof tool?.command === 'string') return tool.command;
-  const validation = recordValue(payload.validation);
-  if (typeof validation?.command === 'string') return validation.command;
-  return undefined;
-}
-
-function contentBlocks(event: LoopwatchEvent): Record<string, unknown>[] {
-  const payload = recordValue(event.payload);
-  const message = recordValue(payload?.message);
-  const content = message?.content ?? payload?.content;
-  return Array.isArray(content) ? content.map(recordValue).filter((block): block is Record<string, unknown> => block !== undefined) : [];
-}
 
 function sessionIsActive(event: LoopwatchEvent, nowMs: number, activeAfterMs: number): boolean {
   const timestamp = Date.parse(event.timestamp);
