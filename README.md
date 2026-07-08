@@ -72,7 +72,7 @@ pnpm build
 
 ### Codex subscription OAuth dogfood
 
-Loopwatch can optionally register Flue's `openai-codex` provider through `flue-codex-oauth`. Until that package is published to npm, this repo depends on a vendored tarball at `vendor/flue-codex-oauth-0.0.0.tgz` built from `https://github.com/dhruvkelawala/flue-codex-oauth` commit `17b1e083b6c54c81cd067855e2d7e7e06eb361dd`.
+Loopwatch can optionally register Flue's `openai-codex` provider through `flue-codex-oauth`. Until that package is published to npm, this repo depends on the GitHub release tarball vendored at `vendor/flue-codex-oauth-0.0.1.tgz` from `https://github.com/dhruvkelawala/flue-codex-oauth/releases/tag/v0.0.1`.
 
 Create the local auth file once:
 

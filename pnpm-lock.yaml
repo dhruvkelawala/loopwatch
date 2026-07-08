@@ -30,8 +30,8 @@ importers:
         specifier: ^5.101.1
         version: 5.101.1(react@19.2.7)
       flue-codex-oauth:
-        specifier: file:vendor/flue-codex-oauth-0.0.0.tgz
-        version: file:vendor/flue-codex-oauth-0.0.0.tgz(@flue/runtime@1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono@4.12.27)(ws@8.21.0)(zod@4.4.3)
+        specifier: file:vendor/flue-codex-oauth-0.0.1.tgz
+        version: file:vendor/flue-codex-oauth-0.0.1.tgz(@flue/runtime@1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono@4.12.27)(ws@8.21.0)(zod@4.4.3)
       hono:
         specifier: ^4.12.27
         version: 4.12.27
@@ -1463,9 +1463,9 @@ packages:
     resolution: {integrity: sha512-afd4O7zpqHeRyg4PfDQsXmlDe2PfdHtJt6Akt8jOWaApLOZk5JXs6VMR29lz03pRe9mpykrRCYIYxaJYcfpncQ==}
     engines: {node: '>=18'}
 
-  flue-codex-oauth@file:vendor/flue-codex-oauth-0.0.0.tgz:
-    resolution: {integrity: sha512-yKZhLMG5W7YROB7XW8PkTVih8rS4+m6FDZq8uoWV4iMLJHt0VZkGu8FYHxTARpdBMyNLs1C4rrjR2GFXFFcA9w==, tarball: file:vendor/flue-codex-oauth-0.0.0.tgz}
-    version: 0.0.0
+  flue-codex-oauth@file:vendor/flue-codex-oauth-0.0.1.tgz:
+    resolution: {integrity: sha512-SsdgZlASwJjLC/PYf7+QbzP72cAY+IEnBNzcrcW+Hc6KmF4h23VpW99YlYw/OcZUY6k0cchyO3rx/qYu4DCDgg==, tarball: file:vendor/flue-codex-oauth-0.0.1.tgz}
+    version: 0.0.1
     engines: {node: '>=20'}
     hasBin: true
     peerDependencies:
@@ -3650,7 +3650,7 @@ snapshots:
 
   find-up-simple@1.0.1: {}
 
-  flue-codex-oauth@file:vendor/flue-codex-oauth-0.0.0.tgz(@flue/runtime@1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono@4.12.27)(ws@8.21.0)(zod@4.4.3):
+  flue-codex-oauth@file:vendor/flue-codex-oauth-0.0.1.tgz(@flue/runtime@1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono@4.12.27)(ws@8.21.0)(zod@4.4.3):
     dependencies:
       '@earendil-works/pi-ai': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@flue/runtime': 1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
