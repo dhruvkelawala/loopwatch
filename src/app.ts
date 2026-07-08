@@ -3,6 +3,7 @@ import { getRun, listRuns, type RunPointer } from '@flue/runtime';
 import { flue } from '@flue/runtime/routing';
 import { Hono, type MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
+import { configureLoopwatchCodexOAuth, createLoopwatchCodexOAuthIntegration, loopwatchCodexOAuthSnapshot } from './codex-oauth.js';
 import { buildConvergenceSnapshot, convergenceConfigFromEnv } from './convergence.js';
 import { buildScopedGitEvidenceEvents } from './git-watch.js';
 import { addUserLoop, loadLoopLibrary, LoopSchema, recommendLoopFromLibrary } from './loops.js';
@@ -17,6 +18,8 @@ const ENGINE_EXPOSED_HEADERS = ['Stream-Next-Offset', 'Stream-Up-To-Date', 'Stre
 const DEFAULT_ENGINE_ALLOWED_ORIGINS = ['tauri://localhost', 'http://tauri.localhost', 'http://127.0.0.1:1420', 'http://localhost:1420'];
 const LOOPBACK_HOSTS: Record<string, true> = { '127.0.0.1': true, localhost: true };
 const runEventCache = new Map<string, LoopwatchEvent[]>();
+const codexOAuth = createLoopwatchCodexOAuthIntegration();
+await configureLoopwatchCodexOAuth(codexOAuth);
 
 // Issue #22: the local engine is private session state. Keep the unauthenticated
 // dev mode for existing scripts, but when the Tauri launcher supplies a per-run
@@ -34,6 +37,10 @@ app.use(
   }),
 );
 
+if (codexOAuth.enabled) {
+  app.use('*', codexOAuth.auth.middleware() as MiddlewareHandler);
+}
+
 app.get('/health', (c) =>
   c.json({
     ok: true,
@@ -41,6 +48,8 @@ app.get('/health', (c) =>
     target: 'node',
   }),
 );
+
+app.get('/loopwatch/codex-auth', (c) => c.json({ ok: true, ...loopwatchCodexOAuthSnapshot(codexOAuth) }));
 
 /**
  * App-owned inspection endpoint for the Cockpit.

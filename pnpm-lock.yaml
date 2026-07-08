@@ -9,14 +9,14 @@ importers:
   .:
     dependencies:
       '@flue/react':
-        specifier: 1.0.0-beta.1
-        version: 1.0.0-beta.1(@flue/sdk@1.0.0-beta.1)(react@19.2.7)
+        specifier: 1.0.0-beta.9
+        version: 1.0.0-beta.9(@flue/sdk@1.0.0-beta.9)(react@19.2.7)
       '@flue/runtime':
-        specifier: 1.0.0-beta.2
-        version: 1.0.0-beta.2(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
+        specifier: 1.0.0-beta.9
+        version: 1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
       '@flue/sdk':
-        specifier: 1.0.0-beta.1
-        version: 1.0.0-beta.1
+        specifier: 1.0.0-beta.9
+        version: 1.0.0-beta.9
       '@fontsource/geist-mono':
         specifier: ^5.2.8
         version: 5.2.8
@@ -29,6 +29,9 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.101.1
         version: 5.101.1(react@19.2.7)
+      flue-codex-oauth:
+        specifier: file:vendor/flue-codex-oauth-0.0.0.tgz
+        version: file:vendor/flue-codex-oauth-0.0.0.tgz(@flue/runtime@1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono@4.12.27)(ws@8.21.0)(zod@4.4.3)
       hono:
         specifier: ^4.12.27
         version: 4.12.27
@@ -41,13 +44,16 @@ importers:
       tailwindcss:
         specifier: ^4.3.1
         version: 4.3.1
+      valibot:
+        specifier: ^1.4.1
+        version: 1.4.1(typescript@5.9.3)
       zod:
         specifier: ^4.4.3
         version: 4.4.3
     devDependencies:
       '@flue/cli':
-        specifier: 1.0.0-beta.1
-        version: 1.0.0-beta.1(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typebox@1.1.38)(typescript@5.9.3)(workerd@1.20260617.1)(wrangler@4.103.0)(ws@8.21.0)(yaml@2.9.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
+        specifier: 1.0.0-beta.9
+        version: 1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(@types/node@25.9.4)(esbuild@0.28.1)(hono@4.12.27)(jiti@2.7.0)(tsx@4.22.4)(typebox@1.1.38)(typescript@5.9.3)(workerd@1.20260617.1)(wrangler@4.103.0)(ws@8.21.0)(yaml@2.9.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
       '@playwright/test':
         specifier: ^1.61.1
         version: 1.61.1
@@ -257,12 +263,12 @@ packages:
     engines: {node: '>=18.0.0'}
     hasBin: true
 
-  '@earendil-works/pi-agent-core@0.79.8':
-    resolution: {integrity: sha512-8m5fcqRpoGpq3QY0I/tFXROSTmPwBb1dAuzYZO3XYgjsdCokkRMAGRjA9P8s/UD6Jy9yy69lyE4H6sz/5A1TmQ==}
+  '@earendil-works/pi-agent-core@0.80.3':
+    resolution: {integrity: sha512-3qw0/GeRQBU/nlGjDe5Yb7ePKTmoxefx2YxyKMFAviFUMXpFexBG/hS7mBtwFahFvzrrTPPoRT6sFIDjwoDWPQ==}
     engines: {node: '>=22.19.0'}
 
-  '@earendil-works/pi-ai@0.79.8':
-    resolution: {integrity: sha512-ZpSwaD7oNpsjn9vtEatZQNT9PSdDJXi6rFeY5Qv+OHQGFDKlmcrfJE4ypm4SAc/fBECPs4Rdi3l+YjVtXYrkKw==}
+  '@earendil-works/pi-ai@0.80.3':
+    resolution: {integrity: sha512-jPZLMeGL5kkMSEAwAklfXTMHqZvfhsJtCCpKGIr5Duk7mc0n4skjB1dugk7y0z3z8ZHIUCmPAWHdyDqgUz5vdA==}
     engines: {node: '>=22.19.0'}
     hasBin: true
 
@@ -431,27 +437,23 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@flue/cli@1.0.0-beta.1':
-    resolution: {integrity: sha512-XbSsn7Nl2/J80Y+7Ph7tLF0Y3+doVdBXD8rPikuaMeq4mhHYSn5DjOwgXS2+TdzKcpOKyNVwttORyoVAjWdbtA==}
+  '@flue/cli@1.0.0-beta.9':
+    resolution: {integrity: sha512-RPv28ecD7lQ2XBZbuohte3rXDqHHrdXTpCGC5mSxYQsEkOeDN2LOmImQZbJqCrkIAFmMgntzOhaF2+14R61C4Q==}
     engines: {node: '>=22.19.0'}
     hasBin: true
 
-  '@flue/react@1.0.0-beta.1':
-    resolution: {integrity: sha512-ccBBGMGhNQQxW/Rv/OQiTDqSD3wDM04WxAF+VWBT+h81SmEFP+8oeto37rwhbvjnvFCI3wCAxR/gbmpeS8C4qA==}
+  '@flue/react@1.0.0-beta.9':
+    resolution: {integrity: sha512-mr8vNtr1kwUpgsq1fISfz1TmPhVOpp/jrQdx0FYSRoeURq+cMVcWo/k5gI86xTS2BjtCN70edYrmxjjRWBUA6A==}
     peerDependencies:
-      '@flue/sdk': 1.0.0-beta.1
+      '@flue/sdk': '>=1.0.0-beta.3 <1.0.0'
       react: '>=18'
 
-  '@flue/runtime@1.0.0-beta.1':
-    resolution: {integrity: sha512-Ts5Za1j6uhjfby0JUut7MaoWpTXP+RCGA7EiZBMYkX/PCpwInVAVjdAxknmOilCdqx4MvsonjZG1VrQQlxFIRA==}
+  '@flue/runtime@1.0.0-beta.9':
+    resolution: {integrity: sha512-ksh0ZkTVyqQnGvU3OnbVX6luAJwe6tt8q7O0vn99b7Cx6XcPTXzY/YEkXrOtCHzV6ZwfSdO9ZfaWbhTD1tdQuQ==}
     engines: {node: '>=22.19.0'}
 
-  '@flue/runtime@1.0.0-beta.2':
-    resolution: {integrity: sha512-AHPaXiE2K0ABVe60XCCjUAH12tO6zMYZ+CJGbcFdPW5cYOGyzc91laBIA6fKHGgRENw4wh7w/6Jz3ZRDCvuKVw==}
-    engines: {node: '>=22.19.0'}
-
-  '@flue/sdk@1.0.0-beta.1':
-    resolution: {integrity: sha512-61VS3lcPey8ZHLGC6lk94yzuNxSHqaROqmgrswnoH2E/1ILR+ZYoLmKYTbQuOi0lulBl/ykh1WlvTQztFg2/nA==}
+  '@flue/sdk@1.0.0-beta.9':
+    resolution: {integrity: sha512-EkGWF1Yw6baM4ekmp+3xFkc+LmDKcIAA0KQSZSpaSqQRYyixXB+IwEbhePS83HCgrR0/jup9l8rgld4Q2IGNOw==}
 
   '@fontsource/geist-mono@5.2.8':
     resolution: {integrity: sha512-YqZUb3X42GjRaHkibUNyE8K4Rk9A6I9Ez81YpJYiuJN4ggmTW2ixoQpa9EWCPfXZtIsCQJTyrDoV9OJOZO/UcA==}
@@ -1460,6 +1462,18 @@ packages:
   find-up-simple@1.0.1:
     resolution: {integrity: sha512-afd4O7zpqHeRyg4PfDQsXmlDe2PfdHtJt6Akt8jOWaApLOZk5JXs6VMR29lz03pRe9mpykrRCYIYxaJYcfpncQ==}
     engines: {node: '>=18'}
+
+  flue-codex-oauth@file:vendor/flue-codex-oauth-0.0.0.tgz:
+    resolution: {integrity: sha512-yKZhLMG5W7YROB7XW8PkTVih8rS4+m6FDZq8uoWV4iMLJHt0VZkGu8FYHxTARpdBMyNLs1C4rrjR2GFXFFcA9w==, tarball: file:vendor/flue-codex-oauth-0.0.0.tgz}
+    version: 0.0.0
+    engines: {node: '>=20'}
+    hasBin: true
+    peerDependencies:
+      '@flue/runtime': '>=1.0.0-beta.9 <2'
+      hono: '>=4'
+    peerDependenciesMeta:
+      hono:
+        optional: true
 
   formdata-polyfill@4.0.10:
     resolution: {integrity: sha512-buewHzMvYL29jdeQTVILecSaZKnt/RJWjoZCF5OW60Z67/GmSLBkOFM7qh1PI3zFNtJbaZL5eQu1vLfazOwj4g==}
@@ -2555,9 +2569,9 @@ snapshots:
       '@microsoft/fetch-event-source': 2.0.1
       fastq: 1.20.1
 
-  '@earendil-works/pi-agent-core@0.79.8(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
+  '@earendil-works/pi-agent-core@0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
-      '@earendil-works/pi-ai': 0.79.8(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-ai': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       ignore: 7.0.5
       typebox: 1.1.38
       yaml: 2.9.0
@@ -2569,7 +2583,7 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.79.8(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
+  '@earendil-works/pi-ai@0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)':
     dependencies:
       '@anthropic-ai/sdk': 0.91.1(zod@4.4.3)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
@@ -2684,14 +2698,18 @@ snapshots:
   '@esbuild/win32-x64@0.28.1':
     optional: true
 
-  '@flue/cli@1.0.0-beta.1(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typebox@1.1.38)(typescript@5.9.3)(workerd@1.20260617.1)(wrangler@4.103.0)(ws@8.21.0)(yaml@2.9.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)':
+  '@flue/cli@1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(@types/node@25.9.4)(esbuild@0.28.1)(hono@4.12.27)(jiti@2.7.0)(tsx@4.22.4)(typebox@1.1.38)(typescript@5.9.3)(workerd@1.20260617.1)(wrangler@4.103.0)(ws@8.21.0)(yaml@2.9.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)':
     dependencies:
       '@cloudflare/vite-plugin': 1.42.1(vite@8.1.0(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0))(workerd@1.20260617.1)(wrangler@4.103.0)
-      '@flue/runtime': 1.0.0-beta.1(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
-      '@flue/sdk': 1.0.0-beta.1
+      '@flue/runtime': 1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
+      '@flue/sdk': 1.0.0-beta.9
+      '@hono/node-server': 2.0.5(hono@4.12.27)
       '@vercel/detect-agent': 1.2.3
+      debug: 4.4.3
       minisearch: 7.2.0
       package-up: 5.0.0
+      picocolors: 1.1.1
+      ulidx: 2.4.1
       valibot: 1.4.1(typescript@5.9.3)
       vite: 8.1.0(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(yaml@2.9.0)
     transitivePeerDependencies:
@@ -2704,6 +2722,7 @@ snapshots:
       - bufferutil
       - effect
       - esbuild
+      - hono
       - jiti
       - less
       - sass
@@ -2725,15 +2744,15 @@ snapshots:
       - zod-openapi
       - zod-to-json-schema
 
-  '@flue/react@1.0.0-beta.1(@flue/sdk@1.0.0-beta.1)(react@19.2.7)':
+  '@flue/react@1.0.0-beta.9(@flue/sdk@1.0.0-beta.9)(react@19.2.7)':
     dependencies:
-      '@flue/sdk': 1.0.0-beta.1
+      '@flue/sdk': 1.0.0-beta.9
       react: 19.2.7
 
-  '@flue/runtime@1.0.0-beta.1(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)':
+  '@flue/runtime@1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)':
     dependencies:
-      '@earendil-works/pi-agent-core': 0.79.8(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
-      '@earendil-works/pi-ai': 0.79.8(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-agent-core': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@earendil-works/pi-ai': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
       '@hono/node-server': 2.0.5(hono@4.12.27)
       '@hono/standard-validator': 0.2.2(@standard-schema/spec@1.1.0)(hono@4.12.27)
       '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
@@ -2765,42 +2784,7 @@ snapshots:
       - zod-openapi
       - zod-to-json-schema
 
-  '@flue/runtime@1.0.0-beta.2(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)':
-    dependencies:
-      '@earendil-works/pi-agent-core': 0.79.8(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
-      '@earendil-works/pi-ai': 0.79.8(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
-      '@hono/node-server': 2.0.5(hono@4.12.27)
-      '@hono/standard-validator': 0.2.2(@standard-schema/spec@1.1.0)(hono@4.12.27)
-      '@modelcontextprotocol/sdk': 1.29.0(zod@4.4.3)
-      '@standard-community/standard-json': 0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(@valibot/to-json-schema@1.7.1(valibot@1.4.1(typescript@5.9.3)))(quansync@0.2.11)(typebox@1.1.38)(valibot@1.4.1(typescript@5.9.3))(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
-      '@standard-community/standard-openapi': 0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(@valibot/to-json-schema@1.7.1(valibot@1.4.1(typescript@5.9.3)))(quansync@0.2.11)(typebox@1.1.38)(valibot@1.4.1(typescript@5.9.3))(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(typebox@1.1.38)(valibot@1.4.1(typescript@5.9.3))(zod@4.4.3)
-      '@valibot/to-json-schema': 1.7.1(valibot@1.4.1(typescript@5.9.3))
-      hono: 4.12.27
-      hono-openapi: 1.3.0(@hono/standard-validator@0.2.2(@standard-schema/spec@1.1.0)(hono@4.12.27))(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(@valibot/to-json-schema@1.7.1(valibot@1.4.1(typescript@5.9.3)))(quansync@0.2.11)(typebox@1.1.38)(valibot@1.4.1(typescript@5.9.3))(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3))(@standard-community/standard-openapi@0.2.9(@standard-community/standard-json@0.3.5(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(@valibot/to-json-schema@1.7.1(valibot@1.4.1(typescript@5.9.3)))(quansync@0.2.11)(typebox@1.1.38)(valibot@1.4.1(typescript@5.9.3))(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3))(@standard-schema/spec@1.1.0)(openapi-types@12.1.3)(typebox@1.1.38)(valibot@1.4.1(typescript@5.9.3))(zod@4.4.3))(@types/json-schema@7.0.15)(hono@4.12.27)(openapi-types@12.1.3)
-      js-yaml: 4.2.0
-      just-bash: 3.0.1
-      openapi-types: 12.1.3
-      quansync: 0.2.11
-      ulidx: 2.4.1
-      valibot: 1.4.1(typescript@5.9.3)
-    transitivePeerDependencies:
-      - '@cfworker/json-schema'
-      - '@standard-schema/spec'
-      - '@types/json-schema'
-      - arktype
-      - bufferutil
-      - effect
-      - supports-color
-      - sury
-      - typebox
-      - typescript
-      - utf-8-validate
-      - ws
-      - zod
-      - zod-openapi
-      - zod-to-json-schema
-
-  '@flue/sdk@1.0.0-beta.1':
+  '@flue/sdk@1.0.0-beta.9':
     dependencies:
       '@durable-streams/client': 0.2.6
 
@@ -3665,6 +3649,20 @@ snapshots:
       - supports-color
 
   find-up-simple@1.0.1: {}
+
+  flue-codex-oauth@file:vendor/flue-codex-oauth-0.0.0.tgz(@flue/runtime@1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(hono@4.12.27)(ws@8.21.0)(zod@4.4.3):
+    dependencies:
+      '@earendil-works/pi-ai': 0.80.3(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(ws@8.21.0)(zod@4.4.3)
+      '@flue/runtime': 1.0.0-beta.9(@standard-schema/spec@1.1.0)(@types/json-schema@7.0.15)(typebox@1.1.38)(typescript@5.9.3)(ws@8.21.0)(zod-to-json-schema@3.25.2(zod@4.4.3))(zod@4.4.3)
+    optionalDependencies:
+      hono: 4.12.27
+    transitivePeerDependencies:
+      - '@modelcontextprotocol/sdk'
+      - bufferutil
+      - supports-color
+      - utf-8-validate
+      - ws
+      - zod
 
   formdata-polyfill@4.0.10:
     dependencies:

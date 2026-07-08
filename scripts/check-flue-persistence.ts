@@ -5,8 +5,8 @@ import { mkdir } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const port = Number(process.env.LOOPWATCH_FLUE_CHECK_PORT ?? 3587);
-const baseUrl = `http://127.0.0.1:${port}`;
-const dbPath = 'data/flue.db';
+const baseUrl = `http://localhost:${port}`;
+const dbPath = 'data/flue-v4.db';
 
 /**
  * A normalized event with deliberately unrecognized fields at every level
@@ -37,7 +37,7 @@ async function waitForServer() {
   let lastError: unknown;
   while (Date.now() < deadline) {
     try {
-      const response = await fetch(`${baseUrl}/openapi.json`);
+      const response = await fetch(`${baseUrl}/health`);
       if (response.ok) return;
     } catch (error) {
       lastError = error;

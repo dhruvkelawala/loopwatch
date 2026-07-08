@@ -70,13 +70,31 @@ Build the local Node target:
 pnpm build
 ```
 
+### Codex subscription OAuth dogfood
+
+Loopwatch can optionally register Flue's `openai-codex` provider through `flue-codex-oauth`. Until that package is published to npm, this repo depends on a vendored tarball at `vendor/flue-codex-oauth-0.0.0.tgz` built from `https://github.com/dhruvkelawala/flue-codex-oauth` commit `17b1e083b6c54c81cd067855e2d7e7e06eb361dd`.
+
+Create the local auth file once:
+
+```sh
+pnpm exec flue-codex-login --auth-path ~/.flue/openai-codex.json
+```
+
+By default, Loopwatch auto-enables the provider only when that auth file exists. Force it on or off with `LOOPWATCH_CODEX_OAUTH=1` / `LOOPWATCH_CODEX_OAUTH=0`, and override the file path with `FLUE_CODEX_AUTH_PATH`. The app exposes a same-engine-boundary status endpoint at `/loopwatch/codex-auth`; it reports checks/status only, never token material.
+
+Run the deterministic integration proof:
+
+```sh
+pnpm codex:oauth:check
+```
+
 Run the persistence proof:
 
 ```sh
 pnpm persistence:check
 ```
 
-That command builds the Flue server, starts it, writes a `record-event` workflow run carrying a normalized Loopwatch Event, stops the process, restarts it, and reads the same run metadata/events back from `data/flue.db`. Passing output proves `src/db.ts` is using file-backed `sqlite()` rather than the Node target's default in-memory database, and that the normalized event survives restart with every unrecognized field intact.
+That command builds the Flue server, starts it, writes a `record-event` workflow run carrying a normalized Loopwatch Event, stops the process, restarts it, and reads the same run metadata/events back from `data/flue-v4.db`. Passing output proves `src/db.ts` is using file-backed `sqlite()` rather than the Node target's default in-memory database, and that the normalized event survives restart with every unrecognized field intact. Override the SQLite path with `LOOPWATCH_FLUE_DB_PATH`; the versioned default keeps older `data/flue.db` files untouched after the Flue beta.9 schema bump.
 
 ### Normalized events
 
