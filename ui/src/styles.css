@@ -125,6 +125,17 @@ button {
   }
 }
 
+/*
+ * The sweep hand is an SVG path drawn from the dial center; without an
+ * explicit reference box it would rotate around the SVG's 0,0 corner and
+ * drift off the dial. view-box + center pins the pivot to the dial center
+ * for any dial size.
+ */
+.animate-watchtower-sweep {
+  transform-box: view-box;
+  transform-origin: center;
+}
+
 @keyframes watchtower-blip {
   0%,
   100% {
