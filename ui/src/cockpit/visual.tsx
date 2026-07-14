@@ -96,12 +96,13 @@ export function formatCost(cost: number): string {
 export function LivenessPill({ liveness }: { liveness: Liveness }) {
   return (
     <span className={`rounded border px-1.5 py-[1.5px] font-mono text-[9px] font-medium uppercase tracking-[.02em] ${livenessClass[liveness]}`}>
-      {liveness}
+      .liv {liveness}
     </span>
   );
 }
 
-export function ConvergenceDial() {
+export function ConvergenceDial({ severity, label }: { severity: Severity; label: string }) {
+  const contact = dialContact[severity];
   return (
     <div className="w-[76px] shrink-0 text-center">
       <svg className="mx-auto block text-watch-accent" height="56" viewBox="0 0 56 56" width="56" aria-hidden="true">
@@ -109,8 +110,9 @@ export function ConvergenceDial() {
         <circle cx="28" cy="28" fill="none" opacity="0.25" r="15" stroke="currentColor" strokeWidth="1" />
         <circle cx="28" cy="28" fill="currentColor" opacity="0.18" r="5" />
         <path className="animate-watchtower-sweep" d="M28 28 L28 5" stroke="currentColor" strokeLinecap="round" strokeWidth="1.6" />
+        <circle className={contact.className} cx={contact.x} cy={contact.y} r="3.2" />
       </svg>
-      <span className="mt-1 block font-mono text-[8.5px] font-medium uppercase tracking-[.14em] text-watch-ink-3">judge off</span>
+      <span className={`mt-1 block font-mono text-[8.5px] font-medium uppercase tracking-[.14em] ${valueToneClass[severity]}`}>{label}</span>
     </div>
   );
 }
@@ -163,4 +165,10 @@ const pingColorClass: Record<Severity, string> = {
   intervention: 'text-severity-intervention',
   watch: 'text-severity-watch',
   calm: 'text-severity-calm',
+};
+
+const dialContact: Record<Severity, { x: number; y: number; className: string }> = {
+  calm: { x: 28, y: 28, className: 'fill-severity-calm animate-watchtower-blip' },
+  watch: { x: 38, y: 21, className: 'fill-severity-watch animate-watchtower-blip' },
+  intervention: { x: 46, y: 14, className: 'fill-severity-intervention animate-watchtower-blip' },
 };

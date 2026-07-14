@@ -30,9 +30,10 @@ const serverUrl = process.env.LOOPWATCH_SERVER_URL ?? 'http://127.0.0.1:3583';
 const root = process.env.PI_SESSIONS_ROOT ?? PI_SESSIONS_ROOT;
 const pollMs = Math.max(1, numEnv('LOOPWATCH_POLL_MS', 1000));
 const initialAnchor = process.env.LOOPWATCH_ANCHOR === 'start' ? 'start' : 'end';
+const engineToken = process.env.LOOPWATCH_ENGINE_TOKEN;
 
 const adapter = new PiAdapter({
-  ingest: httpIngest(serverUrl),
+  ingest: httpIngest(serverUrl, { token: engineToken }),
   root,
   initialAnchor,
   thresholds: {

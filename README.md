@@ -70,13 +70,41 @@ Build the local Node target:
 pnpm build
 ```
 
+### Codex subscription OAuth dogfood
+
+Loopwatch can optionally register Flue's `openai-codex` provider through `flue-codex-oauth`. Until that package is published to npm, this repo depends directly on the public GitHub release tarball from `https://github.com/dhruvkelawala/flue-codex-oauth/releases/tag/v0.0.1`.
+
+Create the local auth file once:
+
+```sh
+pnpm exec flue-codex-login --auth-path ~/.flue/openai-codex.json
+```
+
+By default, Loopwatch auto-enables the provider only when that auth file exists. Force it on or off with `LOOPWATCH_CODEX_OAUTH=1` / `LOOPWATCH_CODEX_OAUTH=0`, and override the file path with `FLUE_CODEX_AUTH_PATH`. The app exposes a same-engine-boundary status endpoint at `/loopwatch/codex-auth`; it reports checks/status only, never token material.
+
+Use Codex as the live convergence judge:
+
+```sh
+LOOPWATCH_CONVERGENCE_JUDGE=model \
+LOOPWATCH_JUDGE_MODEL=openai-codex/gpt-5.5 \
+pnpm tauri:dev
+```
+
+Without `LOOPWATCH_CONVERGENCE_JUDGE=model`, the watcher keeps using the deterministic local judge for offline/test runs.
+
+Run the deterministic integration proof:
+
+```sh
+pnpm codex:oauth:check
+```
+
 Run the persistence proof:
 
 ```sh
 pnpm persistence:check
 ```
 
-That command builds the Flue server, starts it, writes a `record-event` workflow run carrying a normalized Loopwatch Event, stops the process, restarts it, and reads the same run metadata/events back from `data/flue.db`. Passing output proves `src/db.ts` is using file-backed `sqlite()` rather than the Node target's default in-memory database, and that the normalized event survives restart with every unrecognized field intact.
+That command builds the Flue server, starts it, writes a `record-event` workflow run carrying a normalized Loopwatch Event, stops the process, restarts it, and reads the same run metadata/events back from `data/flue-v4.db`. Passing output proves `src/db.ts` is using file-backed `sqlite()` rather than the Node target's default in-memory database, and that the normalized event survives restart with every unrecognized field intact. Override the SQLite path with `LOOPWATCH_FLUE_DB_PATH`; the versioned default keeps older `data/flue.db` files untouched after the Flue beta.9 schema bump.
 
 ### Normalized events
 
@@ -116,7 +144,7 @@ pnpm ingest:check         # integration: adapter → record-events → durable s
 
 ### Cockpit (desktop shell)
 
-The Cockpit is the Watchtower UI ([`ui/`](./ui/)) hosted inside a Tauri desktop shell ([`src-tauri/`](./src-tauri/)), per [ADR-0007](./docs/adr/0007-deployment-shape-flue-node-engine-tauri-shell.md). The shell owns the background observation processes: on launch it spawns `node dist/server.mjs` (the built engine) on port `3583` plus the three Source Adapters (`node dist/adapter-{claude,codex,pi}.mjs`), and on quit it stops every child. Disable any adapter with `LOOPWATCH_{CLAUDE,CODEX,PI}_ADAPTER=0`.
+The Cockpit is the Watchtower UI ([`ui/`](./ui/)) hosted inside a Tauri desktop shell ([`src-tauri/`](./src-tauri/)), per [ADR-0007](./docs/adr/0007-deployment-shape-flue-node-engine-tauri-shell.md). The shell owns the background observation processes: on launch it generates a per-run engine bearer token, spawns `node dist/server.mjs` (the built engine) plus a single supervised Source Adapters child (`node dist/adapter-sources.mjs`, hosting the Claude, Codex, and Pi adapters), and on quit it stops every child. Disable one source with `LOOPWATCH_{CLAUDE,CODEX,PI}_ADAPTER=0` (handled inside the adapters child), or the whole child with `LOOPWATCH_SOURCE_ADAPTERS=0`.
 
 Run the Slice 5 live Cockpit proof (fixture Claude transcript → adapter → Flue runs → Cockpit projection):
 
@@ -145,7 +173,9 @@ Lifecycle on macOS:
 
 Environment overrides for supervised children:
 
-- `LOOPWATCH_NODE_BIN` — Node binary used to run the engine and Claude adapter (default `node`).
-- `LOOPWATCH_CLAUDE_ADAPTER=0` — disable Claude adapter supervision for diagnostics.
+- `LOOPWATCH_NODE_BIN` — Node binary used to run the engine and the source adapters (default `node`).
+- `LOOPWATCH_SOURCE_ADAPTERS=0` — disable all source-adapter supervision for diagnostics.
+- `LOOPWATCH_CLAUDE_ADAPTER=0` / `LOOPWATCH_CODEX_ADAPTER=0` / `LOOPWATCH_PI_ADAPTER=0` — disable a single source.
+- `LOOPWATCH_ENGINE_PORT` / `LOOPWATCH_ENGINE_TOKEN` — pin the engine port/token instead of the launch defaults.
 
-The engine port is fixed at `3583`; the packaged webview's base URL and the CSP `connect-src` are pinned to it.
+In dev the engine listens on `3583`; release launches reserve an ephemeral loopback port. The webview learns the engine base URL and bearer token from `window.__LOOPWATCH_ENGINE_CONFIG__`, injected by the shell before the page loads.

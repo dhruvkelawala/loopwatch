@@ -1,12 +1,21 @@
 import type { FlueEvent } from '@flue/sdk';
 import { capabilitiesFor, extractUsage, type Capability } from './cockpit/capabilities.js';
-import { LoopwatchEventSchema, type LoopwatchEvent } from './schemas/loopwatch.js';
+import { LoopwatchEventSchema, type LoopwatchEvent, type SessionConvergence } from './schemas/loopwatch.js';
 
-export type { LoopwatchEvent } from './schemas/loopwatch.js';
+export type { LoopwatchEvent, SessionConvergence } from './schemas/loopwatch.js';
 
 export type Severity = 'intervention' | 'watch' | 'calm';
 export type Liveness = 'active' | 'idle' | 'ended';
-export type TimelineLaneName = 'request' | 'tools' | 'files' | 'git' | 'validation' | 'convergence';
+export type TimelineLaneName = 'request' | 'tools' | 'files' | 'git' | 'validation' | 'liveness' | 'cost' | 'convergence';
+
+export type CapabilityState = 'available' | 'unavailable';
+
+export interface SourceCapabilityBadge {
+  key: string;
+  label: string;
+  state: CapabilityState;
+  detail: string;
+}
 
 export interface TimelineItem {
   id: string;
@@ -44,16 +53,22 @@ export interface SessionView {
   firstSeen: string;
   lastSeen: string;
   lastEvent: string;
+  freshness: string;
   events: LoopwatchEvent[];
   lanes: TimelineLane[];
+  convergence?: SessionConvergence;
+  /** Per-session capability badges with availability evidence (upgrades inbox). */
+  capabilityBadges: SourceCapabilityBadge[];
 }
 
 const RECORDED_EVENT_MESSAGE = 'loopwatch.event.recorded';
 const LIVENESS_IDLE_AFTER_MS = 5 * 60_000;
 const LIVENESS_ENDED_AFTER_MS = 30 * 60_000;
 
-const laneOrder: TimelineLaneName[] = ['request', 'tools', 'files', 'git', 'validation', 'convergence'];
-const validationCommandPattern = /\b(test|verify|lint|typecheck|tsc|build|cargo\s+test|go\s+test|pytest|vitest|jest|playwright|cypress)\b/i;
+const laneOrder: TimelineLaneName[] = ['request', 'tools', 'files', 'git', 'validation', 'liveness', 'cost', 'convergence'];
+// Keep in sync with src/validation-evidence.ts so the Cockpit's validation
+// lane agrees with the convergence/git watchers about what counts as proof.
+const validationCommandPattern = /\b(test|verify|lint|typecheck|tsc|build|cargo\s+test|go\s+test|pytest|vitest|jest|playwright|cypress|harness|check)\b/i;
 const fileToolNames = new Set(['read', 'write', 'edit', 'multiedit', 'glob', 'grep', 'ls', 'todowrite']);
 
 export function sessionKey(event: Pick<LoopwatchEvent, 'source' | 'sessionId'>): string {
@@ -137,9 +152,11 @@ function buildSessionView(id: string, events: LoopwatchEvent[], nowMs: number): 
     eventCount: events.length,
     firstSeen: first?.timestamp ?? '',
     lastSeen: last?.timestamp ?? '',
+    freshness: freshnessForEvent(last, nowMs),
     lastEvent: timelineItemForEvent(last).detail,
     events,
-    lanes: buildTimelineLanes(events),
+    lanes: withLivenessLane(buildTimelineLanes(events), id, last, liveness, nowMs),
+    capabilityBadges: capabilityBadgesForSession(first?.source ?? 'unknown', events, usage),
   };
 }
 
@@ -148,6 +165,51 @@ function sourceLabel(source: string): string {
   if (source.toLowerCase() === 'codex') return 'Codex';
   if (source.toLowerCase() === 'pi') return 'Pi';
   return source;
+}
+
+function capabilityBadgesForSession(
+  source: string,
+  events: LoopwatchEvent[],
+  usage: { tokens: number | null; cost: number | null },
+): SourceCapabilityBadge[] {
+  const normalized = source.toLowerCase();
+  const hasToolCalls = events.some((event) => event.kind === 'tool_call' || event.kind === 'tool_result');
+  const hasBranch = events.some((event) => !!event.context?.gitBranch);
+  const hasCost = usage.cost !== null;
+  const hasTokens = usage.tokens !== null;
+
+  if (normalized === 'claude') {
+    return [
+      capability('transcript', 'transcript', 'available', 'JSONL transcript activity'),
+      capability('tool-calls', 'tools', hasToolCalls ? 'available' : 'unavailable', hasToolCalls ? 'tool calls observed' : 'no tool calls observed yet'),
+      capability('tokens', 'tokens', hasTokens ? 'available' : 'unavailable', hasTokens ? 'token usage observed' : 'token usage unavailable in this session'),
+      capability('cost', 'cost', 'unavailable', 'Claude adapter does not provide direct cost'),
+      capability('branch', 'branch', hasBranch ? 'available' : 'unavailable', hasBranch ? 'branch from transcript' : 'branch unavailable'),
+    ];
+  }
+  if (normalized === 'codex') {
+    return [
+      capability('transcript', 'transcript', 'available', 'rollout JSONL activity'),
+      capability('tool-calls', 'tools', hasToolCalls ? 'available' : 'unavailable', hasToolCalls ? 'tool calls observed' : 'no tool calls observed yet'),
+      capability('tokens', 'tokens', hasTokens ? 'available' : 'unavailable', hasTokens ? 'cumulative token_count observed' : 'token usage unavailable in this session'),
+      capability('cost', 'cost', 'unavailable', 'Codex cost is unavailable'),
+      capability('branch', 'branch', hasBranch ? 'available' : 'unavailable', hasBranch ? 'branch from event context' : 'branch unavailable'),
+    ];
+  }
+  if (normalized === 'pi') {
+    return [
+      capability('transcript', 'transcript', 'available', 'Pi typed JSONL events'),
+      capability('tool-calls', 'tools', hasToolCalls ? 'available' : 'unavailable', hasToolCalls ? 'tool or validation events observed' : 'no tool events observed yet'),
+      capability('cost', 'cost', hasCost ? 'available' : 'unavailable', hasCost ? 'direct Pi cost observed' : 'direct Pi cost unavailable in this session'),
+      capability('tokens', 'tokens', hasTokens ? 'available' : 'unavailable', hasTokens ? 'token usage observed' : 'token usage unavailable in this session'),
+      capability('branch', 'branch', hasBranch ? 'available' : 'unavailable', hasBranch ? 'branch inferred from git/worktree' : 'branch unavailable'),
+    ];
+  }
+  return [capability('transcript', 'transcript', 'unavailable', 'unknown source capability')];
+}
+
+function capability(key: string, label: string, state: CapabilityState, detail: string): SourceCapabilityBadge {
+  return { key, label, state, detail };
 }
 
 function titleForSession(events: LoopwatchEvent[]): string {
@@ -216,6 +278,24 @@ function elapsedForSession(first: LoopwatchEvent | undefined, last: LoopwatchEve
   return formatDuration(Math.max(0, end - start));
 }
 
+function freshnessForEvent(event: LoopwatchEvent | undefined, nowMs: number): string {
+  if (!event) return 'no source writes';
+  const last = parseTime(event.timestamp);
+  if (!Number.isFinite(last)) return 'freshness unknown';
+  return `${formatDuration(Math.max(0, nowMs - last))} since last source write`;
+}
+
+function withLivenessLane(lanes: TimelineLane[], sessionId: string, last: LoopwatchEvent | undefined, liveness: Liveness, nowMs: number): TimelineLane[] {
+  const item: TimelineItem = {
+    id: `${sessionId}:liveness:${liveness}:${last?.timestamp ?? 'none'}`,
+    at: last?.timestamp ?? '',
+    label: `.liv ${liveness}`,
+    tone: liveness === 'active' ? 'calm' : liveness === 'idle' ? 'watch' : 'neutral',
+    detail: freshnessForEvent(last, nowMs),
+  };
+  return lanes.map((lane) => (lane.lane === 'liveness' ? { lane: lane.lane, items: [item] } : lane));
+}
+
 function phaseForEvent(event: LoopwatchEvent | undefined): string {
   if (!event) return 'no events';
   if (event.kind === 'tool_call') return 'tool call';
@@ -229,6 +309,7 @@ function phaseForEvent(event: LoopwatchEvent | undefined): string {
 
 function laneForEvent(event: LoopwatchEvent): TimelineLaneName {
   if (event.kind === 'message') return 'request';
+  if (event.kind === 'usage') return 'cost';
 
   const toolName = toolNameFromEvent(event)?.toLowerCase();
   const command = bashCommandFromEvent(event);
@@ -248,8 +329,9 @@ function timelineItemForEvent(event: LoopwatchEvent | undefined): TimelineItem {
   const command = bashCommandFromEvent(event);
   const toolName = toolNameFromEvent(event);
   const text = textFromEvent(event);
+  const usageDetail = usageDetailFromEvent(event);
   const label = labelForEvent(event, toolName);
-  const detail = compact(command ?? text ?? event.kind, 280);
+  const detail = compact(command ?? usageDetail ?? text ?? event.kind, 280);
 
   return {
     id: eventFingerprint(event),
@@ -266,6 +348,7 @@ function labelForEvent(event: LoopwatchEvent, toolName: string | undefined): str
   if (event.kind === 'message' && event.actor.type === 'user') return 'User request';
   if (event.kind === 'message' && event.actor.type === 'agent') return 'Agent response';
   if (event.kind === 'system') return 'System event';
+  if (event.kind === 'usage') return 'Usage update';
   return event.kind;
 }
 
@@ -280,6 +363,7 @@ function textFromEvent(event: LoopwatchEvent): string | undefined {
   const payload = payloadRecord(event);
   if (!payload) return undefined;
 
+  const native = sourceEnvelopePayload(payload);
   if (typeof payload.content === 'string') return payload.content;
   const message = recordValue(payload.message);
   const direct = textFromContent(message?.content);
@@ -337,7 +421,12 @@ function toolNameFromEvent(event: LoopwatchEvent): string | undefined {
   if (codex?.name) return codex.name;
 
   const payload = payloadRecord(event);
+  const native = payload ? sourceEnvelopePayload(payload) : undefined;
+  const tool = recordValue(payload?.tool) ?? recordValue(native?.tool);
+  if (typeof tool?.name === 'string') return tool.name;
+  if (typeof native?.name === 'string') return native.name;
   if (typeof payload?.toolName === 'string') return payload.toolName;
+  if (recordValue(payload?.validation)?.command) return 'validation';
   return undefined;
 }
 
@@ -422,6 +511,47 @@ function codexCommandFromArguments(args: unknown): string | undefined {
 
 function payloadRecord(event: LoopwatchEvent): Record<string, unknown> | undefined {
   return recordValue(event.payload);
+}
+
+function sourceEnvelopePayload(payload: Record<string, unknown>): Record<string, unknown> | undefined {
+  return recordValue(payload.payload);
+}
+
+function usageDetailFromEvent(event: LoopwatchEvent): string | undefined {
+  const tokens = tokenCountFromEvent(event);
+  const cost = costFromEvent(event);
+  if (tokens === undefined && cost === undefined) return undefined;
+  const parts: string[] = [];
+  if (tokens !== undefined) parts.push(`${tokens.toLocaleString()} tokens`);
+  if (cost !== undefined) parts.push(`$${cost.toFixed(6)}`);
+  return parts.join(' · ');
+}
+
+function tokenCountFromEvent(event: LoopwatchEvent): number | undefined {
+  const payload = payloadRecord(event);
+  if (!payload) return undefined;
+  const native = sourceEnvelopePayload(payload);
+  const message = recordValue(payload.message) ?? recordValue(native?.message);
+  const usage = recordValue(payload.usage) ?? recordValue(message?.usage) ?? recordValue(native?.usage);
+  const direct = numberValue(usage?.totalTokens) ?? numberValue(usage?.total_tokens);
+  if (direct !== undefined) return direct;
+  const input = numberValue(usage?.input);
+  const output = numberValue(usage?.output);
+  return input !== undefined && output !== undefined ? input + output : undefined;
+}
+
+function costFromEvent(event: LoopwatchEvent): number | undefined {
+  const payload = payloadRecord(event);
+  if (!payload) return undefined;
+  const native = sourceEnvelopePayload(payload);
+  const message = recordValue(payload.message) ?? recordValue(native?.message);
+  const usage = recordValue(payload.usage) ?? recordValue(message?.usage) ?? recordValue(native?.usage);
+  const cost = recordValue(usage?.cost);
+  return numberValue(cost?.total) ?? numberValue(usage?.costUsd) ?? numberValue(usage?.cost_usd);
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
 function recordValue(value: unknown): Record<string, unknown> | undefined {

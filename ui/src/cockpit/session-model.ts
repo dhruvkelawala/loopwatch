@@ -1,28 +1,50 @@
-import { useEffect, useMemo, useState } from 'react';
-import { buildSessionViews, type LoopwatchEvent, type SessionView } from '../loopwatch-events';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { buildSessionViews, type LoopwatchEvent, type SessionConvergence, type SessionView, type TimelineItem, type TimelineLane } from '../loopwatch-events';
 
-export type SessionGroup = { repo: string; sessions: SessionView[] };
+export type SessionGroup = { key: string; repo: string; source: string; sessions: SessionView[] };
 
-export function useCockpitSessionModel(events: LoopwatchEvent[]) {
+export function useCockpitSessionModel(events: LoopwatchEvent[], convergenceSessions: SessionConvergence[] = []) {
   const nowMs = useNow(15_000);
-  const sessions = useMemo(() => buildSessionViews(events, nowMs), [events, nowMs]);
-  const [selectedId, setSelectedId] = useState('');
+  const convergenceBySession = useMemo(() => new Map(convergenceSessions.map((session) => [session.id, session])), [convergenceSessions]);
+  const sessions = useMemo(() => applyConvergence(buildSessionViews(events, nowMs), convergenceBySession), [events, convergenceBySession, nowMs]);
+  const [selectedId, setSelectedId] = useState(() => sessionIdFromLocation());
+  const selectSession = useCallback((sessionId: string) => {
+    setSelectedId(sessionId);
+    writeSessionHash(sessionId);
+  }, []);
 
   useEffect(() => {
-    if (sessions.length === 0) {
-      if (selectedId) setSelectedId('');
-      return;
-    }
+    const focusSession = (event: Event) => {
+      const sessionId = (event as CustomEvent<{ sessionId?: unknown }>).detail?.sessionId;
+      if (typeof sessionId !== 'string' || sessionId.trim() === '') return;
+      selectSession(sessionId);
+    };
+    const syncFromHash = () => {
+      const sessionId = sessionIdFromLocation();
+      if (sessionId) setSelectedId(sessionId);
+    };
+
+    window.addEventListener('loopwatch:focus-session', focusSession);
+    window.addEventListener('hashchange', syncFromHash);
+    return () => {
+      window.removeEventListener('loopwatch:focus-session', focusSession);
+      window.removeEventListener('hashchange', syncFromHash);
+    };
+  }, [selectSession]);
+
+  useEffect(() => {
+    if (sessions.length === 0) return;
     if (!selectedId || !sessions.some((session) => session.id === selectedId)) {
       setSelectedId(sessions[0].id);
     }
   }, [selectedId, sessions]);
 
   return {
+    sessions,
     groupedSessions: groupSessionsByRepo(sessions),
     selected: sessions.find((session) => session.id === selectedId) ?? sessions[0],
     selectedId,
-    selectSession: setSelectedId,
+    selectSession,
   };
 }
 
@@ -38,11 +60,108 @@ function useNow(intervalMs: number): number {
 function groupSessionsByRepo(sessions: SessionView[]): SessionGroup[] {
   const groups = new Map<string, SessionView[]>();
   for (const session of sessions) {
-    const group = groups.get(session.repo) ?? [];
+    const key = `${session.repo}\u0000${session.source}`;
+    const group = groups.get(key) ?? [];
     group.push(session);
-    groups.set(session.repo, group);
+    groups.set(key, group);
   }
   return [...groups.entries()]
-    .map(([repo, group]) => ({ repo, sessions: group }))
-    .sort((a, b) => a.repo.localeCompare(b.repo));
+    .map(([key, group]) => ({ key, repo: group[0]?.repo ?? 'repo unavailable', source: group[0]?.source ?? 'Source unavailable', sessions: group }))
+    .sort((a, b) => a.repo.localeCompare(b.repo) || a.source.localeCompare(b.source));
+}
+
+function applyConvergence(sessions: SessionView[], convergenceBySession: Map<string, SessionConvergence>): SessionView[] {
+  return sessions.map((session) => {
+    const convergence = convergenceBySession.get(session.id);
+    if (!convergence) return session;
+    return {
+      ...session,
+      goal: convergence.summary.goal || session.goal,
+      phase: convergence.status === 'calm' ? session.phase : convergence.evidence[0]?.signal.replaceAll('_', ' ') ?? session.phase,
+      severity: convergence.status,
+      convergence,
+      lanes: withConvergenceLane(withGitLane(session.lanes, convergence), convergence),
+    };
+  });
+}
+
+function withGitLane(lanes: TimelineLane[], convergence: SessionConvergence): TimelineLane[] {
+  if (!convergence.git) return lanes;
+  const item: TimelineItem = {
+    id: `${convergence.id}:git:${convergence.git.sampledAt}`,
+    at: convergence.git.sampledAt,
+    label: convergence.git.dirty ? 'Working tree changed' : 'Working tree clean',
+    tone: convergence.git.dirty ? 'watch' : 'calm',
+    detail: `${convergence.git.diff.files} files · +${convergence.git.diff.insertions}/-${convergence.git.diff.deletions} · ${convergence.git.validation.detail}`,
+  };
+  return lanes.map((lane) => (lane.lane === 'git' ? { lane: lane.lane, items: [item] } : lane));
+}
+
+function withConvergenceLane(lanes: TimelineLane[], convergence: SessionConvergence): TimelineLane[] {
+  return lanes.map((lane) => {
+    if (lane.lane !== 'convergence') return lane;
+    return { lane: lane.lane, items: convergenceItems(convergence) };
+  });
+}
+
+function convergenceItems(convergence: SessionConvergence): TimelineItem[] {
+  const pivotItem = convergence.pivotNudge
+    ? [
+        {
+          id: `${convergence.id}:pivot:${convergence.pivotNudge.eventId}`,
+          at: convergence.pivotNudge.timestamp,
+          label: convergence.pivotNudge.mode === 'loud' ? 'Pivot nudge' : 'Pivot noted',
+          tone: convergence.pivotNudge.mode === 'loud' ? ('watch' as const) : ('neutral' as const),
+          detail: convergence.pivotNudge.recommendedAction,
+        },
+      ]
+    : [];
+  const insightItem = convergence.postSessionInsight
+    ? [
+        {
+          id: `${convergence.id}:post-session:${convergence.postSessionInsight.signal}`,
+          at: convergence.postSessionInsight.createdAt,
+          label: 'Post-session coaching',
+          tone: 'neutral' as const,
+          detail: convergence.postSessionInsight.recommendation,
+        },
+      ]
+    : [];
+
+  if (convergence.evidence.length === 0) {
+    return [
+      ...pivotItem,
+      ...insightItem,
+      {
+        id: `${convergence.id}:convergence:calm`,
+        at: convergence.judge.lastRunAt ?? convergence.lastEventAt,
+        label: 'Convergence calm',
+        tone: 'calm',
+        detail: `Cheap judge found no concerns · ${convergence.spend.totalCalls} calls`,
+      },
+    ];
+  }
+
+  return [
+    ...pivotItem,
+    ...insightItem,
+    ...convergence.evidence.map((evidence) => ({
+      id: `${convergence.id}:convergence:${evidence.eventId}:${evidence.signal}`,
+      at: evidence.timestamp,
+      label: evidence.title,
+      tone: evidence.severity,
+      detail: evidence.detail,
+    })),
+  ];
+}
+
+function sessionIdFromLocation(): string {
+  const raw = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('session');
+  return raw?.trim() ?? '';
+}
+
+function writeSessionHash(sessionId: string) {
+  const next = `session=${encodeURIComponent(sessionId)}`;
+  if (window.location.hash.replace(/^#/, '') === next) return;
+  window.history.replaceState(null, '', `#${next}`);
 }

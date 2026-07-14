@@ -9,5 +9,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["flue.config.ts", "src/**/*.ts", "scripts/**/*.ts"]
+  "include": ["flue.config.ts", "src/**/*.ts", "scripts/**/*.ts", "tests/**/*.ts", "playwright.config.ts"]
 }

@@ -44,3 +44,173 @@ export const LoopwatchRunsResponseSchema = z.object({
   runs: z.array(LoopwatchRunPointerSchema),
   nextPollMs: z.number().int().positive().optional(),
 });
+
+export const ConvergenceStatusSchema = z.enum(['calm', 'watch', 'intervention']);
+
+export const ConvergenceEvidenceRefSchema = z.object({
+  eventId: z.string().min(1),
+  timestamp: z.string(),
+  kind: z.string().min(1),
+  severity: ConvergenceStatusSchema,
+  signal: z.enum(['drift', 'burn', 'weak_validation', 'churn', 'completion_without_evidence']),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  recommendedAction: z.string().min(1).optional(),
+});
+
+export const RunningSummarySchema = z.object({
+  goal: z.string().min(1),
+  done: z.array(z.string()),
+  validation: z.array(z.string()),
+  concerns: z.array(z.string()),
+});
+
+export const ConvergenceSpendSchema = z.object({
+  cheapCalls: z.number().int().nonnegative(),
+  strongCalls: z.number().int().nonnegative(),
+  totalCalls: z.number().int().nonnegative(),
+  estimatedTokens: z.number().int().nonnegative(),
+  estimatedCostUsd: z.number().nonnegative(),
+});
+export type ConvergenceSpend = z.infer<typeof ConvergenceSpendSchema>;
+
+export const LoopAnchorSchema = z.object({
+  loopId: z.string().min(1),
+  title: z.string().min(1),
+  source: z.literal('opening_prompt'),
+  confidence: z.number().min(0).max(1),
+  threshold: z.number().min(0).max(1).optional(),
+  reason: z.string().min(1),
+  stopCondition: z.object({
+    evidence: z.string().min(1),
+    observable: z.boolean(),
+  }),
+});
+export type LoopAnchor = z.infer<typeof LoopAnchorSchema>;
+
+export const PivotNudgeSchema = z.object({
+  id: z.string().min(1),
+  eventId: z.string().min(1),
+  timestamp: z.string(),
+  mode: z.enum(['calm', 'loud']),
+  source: z.literal('user_redirection'),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  recommendedAction: z.string().min(1),
+  fromGoal: z.string().min(1),
+  toGoal: z.string().min(1),
+});
+export type PivotNudge = z.infer<typeof PivotNudgeSchema>;
+
+export const PostSessionInsightSchema = z.object({
+  id: z.string().min(1),
+  sessionId: z.string().min(1),
+  createdAt: z.string().min(1),
+  source: z.literal('post_session'),
+  title: z.string().min(1),
+  detail: z.string().min(1),
+  recommendation: z.string().min(1),
+  evidenceEventIds: z.array(z.string().min(1)).min(1),
+  signal: z.enum(['drift', 'burn', 'weak_validation', 'churn', 'completion_without_evidence']),
+});
+export type PostSessionInsight = z.infer<typeof PostSessionInsightSchema>;
+
+export const GitEvidenceSnapshotSchema = z.object({
+  repoRoot: z.string().min(1),
+  repo: z.string().min(1),
+  branch: z.string().min(1),
+  dirty: z.boolean(),
+  changedFiles: z.array(z.string()),
+  diff: z.object({
+    files: z.number().int().nonnegative(),
+    insertions: z.number().int().nonnegative(),
+    deletions: z.number().int().nonnegative(),
+  }),
+  head: z
+    .object({
+      sha: z.string().min(1),
+      subject: z.string().min(1),
+      committedAt: z.string().min(1),
+    })
+    .optional(),
+  validation: z.object({
+    status: z.enum(['passed', 'failed', 'unknown']),
+    detail: z.string().min(1),
+    eventId: z.string().optional(),
+  }),
+  sampledAt: z.string().min(1),
+});
+export type GitEvidenceSnapshot = z.infer<typeof GitEvidenceSnapshotSchema>;
+
+export const SessionConvergenceSchema = z.object({
+  id: z.string().min(1),
+  source: z.string().min(1),
+  sessionId: z.string().min(1),
+  status: ConvergenceStatusSchema,
+  liveness: z.enum(['active', 'idle', 'ended']),
+  summary: RunningSummarySchema,
+  evidence: z.array(ConvergenceEvidenceRefSchema),
+  judge: z.object({
+    provider: z.string().min(1),
+    lastTier: z.enum(['cheap', 'strong']).optional(),
+    lastRunAt: z.string().optional(),
+    nextEligibleAt: z.string().optional(),
+    lastReason: z.string().optional(),
+    rateCapMs: z.number().int().positive(),
+  }),
+  spend: ConvergenceSpendSchema,
+  eventCount: z.number().int().nonnegative(),
+  meaningfulEventCount: z.number().int().nonnegative(),
+  lastEventAt: z.string(),
+  git: GitEvidenceSnapshotSchema.optional(),
+  loopAnchor: LoopAnchorSchema.optional(),
+  pivotNudge: PivotNudgeSchema.optional(),
+  postSessionInsight: PostSessionInsightSchema.optional(),
+});
+export type SessionConvergence = z.infer<typeof SessionConvergenceSchema>;
+
+export const LoopwatchConvergenceResponseSchema = z.object({
+  ok: z.literal(true),
+  sessions: z.array(SessionConvergenceSchema),
+  spend: ConvergenceSpendSchema,
+  nextPollMs: z.number().int().positive(),
+});
+export type LoopwatchConvergenceResponse = z.infer<typeof LoopwatchConvergenceResponseSchema>;
+
+export const LoopStopConditionSchema = z.object({
+  evidence: z.string().min(1),
+  observable: z.boolean(),
+});
+export type LoopStopCondition = z.infer<typeof LoopStopConditionSchema>;
+
+export const LoopSchema = z.object({
+  id: z.string().min(1),
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  trigger: z.string().min(1),
+  action: z.string().min(1),
+  verification: z.string().min(1),
+  memory: z.string().min(1),
+  stopCondition: LoopStopConditionSchema,
+  tags: z.array(z.string()),
+});
+export type Loop = z.infer<typeof LoopSchema>;
+
+export const CoachingCardSchema = z.object({
+  type: z.literal('coaching'),
+  task: z.string().min(1),
+  loop: LoopSchema,
+  score: z.number().nonnegative(),
+  reason: z.string().min(1),
+  copyPrompt: z.string().min(1),
+  recommendationOnly: z.literal(true),
+});
+export type CoachingCard = z.infer<typeof CoachingCardSchema>;
+
+export const LoopRecommendationResponseSchema = z.object({
+  ok: z.literal(true),
+  card: CoachingCardSchema,
+  loops: z.array(LoopSchema),
+  userLoopsPath: z.string().min(1),
+});
+export type LoopRecommendationResponse = z.infer<typeof LoopRecommendationResponseSchema>;

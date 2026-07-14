@@ -15,6 +15,12 @@ src-tauri/gen/schemas/
 data/
 *.log
 
+.loopwatch/
+playwright-report/
+test-results/
+package-lock.json
+ui/public/loopwatch-runtime.json
+
 # Env / secrets
 .env
 .env.*

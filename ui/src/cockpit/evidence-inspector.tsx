@@ -1,17 +1,28 @@
 import type { ReactNode } from 'react';
 import type { Severity, SessionView } from '../loopwatch-events';
 import { CapabilityBadges, formatCost, formatTokens } from './visual';
-import { healthEndpoint, loopwatchRunsEndpoint } from './endpoints';
-import type { RunBridgeState } from './live-replay';
+import { healthEndpoint, loopwatchConvergenceEndpoint, loopwatchRunsEndpoint } from './endpoints';
+import type { ConvergenceBridgeState, RunBridgeState } from './live-replay';
+import type { LoopRecommendationState } from './loop-recommendation';
+import type { UpgradeCard } from './upgrades';
+import { interventionEvidenceKey } from './intervention-card';
 
 export function EvidenceInspector({
   session,
   flueBaseUrl,
   bridgeState,
+  convergenceState,
+  focusedEvidenceKey,
+  loopRecommendation,
+  upgradeCards,
 }: {
   session: SessionView | undefined;
   flueBaseUrl: string;
   bridgeState: RunBridgeState;
+  convergenceState: ConvergenceBridgeState;
+  focusedEvidenceKey?: string;
+  loopRecommendation: LoopRecommendationState;
+  upgradeCards: UpgradeCard[];
 }) {
   return (
     <aside className="min-h-0 overflow-auto border-l border-watch-line bg-gradient-to-b from-watch-panel to-watch-panel-2 max-[980px]:hidden">
@@ -31,9 +42,21 @@ export function EvidenceInspector({
         <EvidenceDetails rows={replayBridgeRows(flueBaseUrl, bridgeState)} />
       </EvidenceCard>
 
-      <div className="mx-3 my-3 border-l-2 border-watch-line-2 py-0.5 pl-3 text-[11.5px] leading-[1.65] text-watch-ink-2">
-        <b className="font-semibold text-watch-ink">Slice 9 scope:</b> Claude, Codex, and Pi adapters now feed the rail, each with honest capability badges. Missing data shows as <span className="text-watch-ink-3">unavailable</span> — never faked. The convergence lane stays inert until the watcher lands.
-      </div>
+      <EvidenceCard tone={session?.severity} title="Convergence watcher" number="03">
+        <EvidenceDetails rows={convergenceRows(session, convergenceState, flueBaseUrl, focusedEvidenceKey)} />
+      </EvidenceCard>
+
+      <EvidenceCard title="Scoped git watcher" number="04">
+        <EvidenceDetails rows={gitWatcherRows(session)} />
+      </EvidenceCard>
+
+      <EvidenceCard title="Coaching recommendation" number="05">
+        <EvidenceDetails rows={loopRecommendationRows(loopRecommendation)} />
+      </EvidenceCard>
+
+      <EvidenceCard title="Upgrades inbox" number="06">
+        <UpgradeInbox cards={upgradeCards} />
+      </EvidenceCard>
 
       <div className="mx-3 my-3 border-l-2 border-severity-watch py-0.5 pl-3 text-[11.5px] leading-[1.65] text-watch-ink-2">
         Health probe: <code className="rounded bg-watch-code px-1.5 py-0.5 font-mono text-[10.5px] text-watch-accent">{healthEndpoint(flueBaseUrl)}</code>
@@ -66,6 +89,7 @@ function currentReadRows(session: SessionView): EvidenceDetail[] {
     { label: 'cost', detail: <UsageValue available={session.capabilities.includes('cost')} value={session.cost} render={formatCost} /> },
     { label: 'phase', detail: session.phase },
     { label: 'last event', detail: session.lastEvent },
+    { label: 'freshness', detail: session.freshness },
   ];
 }
 
@@ -89,6 +113,128 @@ function replayBridgeRows(flueBaseUrl: string, bridgeState: RunBridgeState): Evi
   ];
 }
 
+function convergenceRows(session: SessionView | undefined, convergenceState: ConvergenceBridgeState, flueBaseUrl: string, focusedEvidenceKey?: string): EvidenceDetail[] {
+  const convergence = session?.convergence;
+  if (!convergence) {
+    return [
+      { label: 'Watcher', detail: convergenceState.detail },
+      { label: 'Discovery', detail: loopwatchConvergenceEndpoint(flueBaseUrl) },
+      { label: 'Spend', detail: `cheap ${convergenceState.spend.cheapCalls} · strong ${convergenceState.spend.strongCalls} · $${convergenceState.spend.estimatedCostUsd.toFixed(6)}` },
+    ];
+  }
+
+  const selectedEvidence = convergence.evidence.find((item) => interventionEvidenceKey(session.id, item) === focusedEvidenceKey) ?? convergence.evidence[0];
+  const rows: EvidenceDetail[] = [
+    { label: 'status', detail: convergence.status },
+    { label: 'goal', detail: convergence.summary.goal },
+    { label: 'evidence', detail: selectedEvidence?.title ?? 'No convergence concerns' },
+    { label: 'signal', detail: selectedEvidence?.signal.replaceAll('_', ' ') ?? 'none' },
+    { label: 'receipt', detail: selectedEvidence ? selectedEvidence.detail : 'No evidence receipt selected' },
+    { label: 'event id', detail: selectedEvidence?.eventId ?? 'none' },
+    { label: 'judge', detail: `${convergence.judge.lastTier ?? 'not run'} · cap ${Math.round(convergence.judge.rateCapMs / 1000)}s` },
+    { label: 'spend', detail: `cheap ${convergence.spend.cheapCalls} · strong ${convergence.spend.strongCalls} · ${convergence.spend.estimatedTokens} tokens · $${convergence.spend.estimatedCostUsd.toFixed(6)}` },
+  ];
+
+  if (convergence.loopAnchor) {
+    rows.splice(
+      2,
+      0,
+      { label: 'loop', detail: `${convergence.loopAnchor.title} · ${Math.round(convergence.loopAnchor.confidence * 100)}%` },
+      { label: 'rubric', detail: convergence.loopAnchor.stopCondition.evidence },
+    );
+  }
+
+  if (convergence.pivotNudge) {
+    rows.splice(
+      2,
+      0,
+      { label: 'pivot', detail: `${convergence.pivotNudge.mode} · ${convergence.pivotNudge.title}` },
+      { label: 'fresh session', detail: convergence.pivotNudge.recommendedAction },
+    );
+  }
+
+  if (convergence.postSessionInsight) {
+    rows.splice(
+      2,
+      0,
+      { label: 'post-session', detail: convergence.postSessionInsight.title },
+      { label: 'coaching', detail: convergence.postSessionInsight.recommendation },
+    );
+  }
+
+  return rows;
+}
+
+function gitWatcherRows(session: SessionView | undefined): EvidenceDetail[] {
+  const git = session?.convergence?.git;
+  if (!session) return [{ label: 'scope', detail: 'No active Agent Session selected.' }];
+  if (!git) return [{ label: 'scope', detail: 'No scoped git evidence for this active session yet.' }];
+
+  return [
+    { label: 'scope', detail: 'Active-session repo only' },
+    { label: 'repo', detail: git.repo },
+    { label: 'branch', detail: git.branch },
+    { label: 'diff', detail: `${git.diff.files} files · +${git.diff.insertions}/-${git.diff.deletions}` },
+    { label: 'files', detail: git.changedFiles.length > 0 ? git.changedFiles.slice(0, 6).join(', ') : 'clean working tree' },
+    { label: 'validation', detail: git.validation.detail },
+    { label: 'head', detail: git.head ? `${git.head.sha.slice(0, 7)} ${git.head.subject}` : 'no commit observed' },
+  ];
+}
+
+function loopRecommendationRows(recommendation: LoopRecommendationState): EvidenceDetail[] {
+  const card = recommendation.card;
+  if (!card) return [{ label: 'loop', detail: recommendation.detail }];
+
+  return [
+    { label: 'loop', detail: card.loop.title },
+    { label: 'why', detail: card.reason },
+    { label: 'stop', detail: card.loop.stopCondition.evidence },
+    { label: 'copy', detail: <CopyPrompt value={card.copyPrompt} /> },
+  ];
+}
+
+function UpgradeInbox({ cards }: { cards: UpgradeCard[] }) {
+  if (cards.length === 0) return <p className="text-[11.5px] leading-[1.65] text-watch-ink-2">No repeated Loopwatch blind spots detected yet.</p>;
+
+  return (
+    <div className="grid gap-3">
+      <p className="text-[11.5px] leading-[1.6] text-watch-ink-2">Human-approved proposals only. Loopwatch will not edit itself, install hooks, change settings, or open PRs.</p>
+      {cards.map((card) => (
+        <section aria-label="Upgrade Card" className="rounded-[8px] border border-watch-line bg-watch-code p-2.5" key={card.id}>
+          <div className="font-mono text-[10px] font-semibold uppercase tracking-[.12em] text-watch-ink-3">Upgrade Card</div>
+          <h3 className="mt-1 text-[12.5px] font-semibold text-watch-ink">{card.title}</h3>
+          <p className="mt-2 text-[11.5px] leading-[1.55] text-watch-ink-2">{card.evidence}</p>
+          <p className="mt-2 text-[11.5px] leading-[1.55] text-watch-ink">{card.suggestedUpgrade}</p>
+          <ul className="mt-2 grid gap-1 text-[11px] leading-[1.5] text-watch-ink-2">
+            {card.acceptanceCriteria.map((criterion) => (
+              <li key={criterion}>- {criterion}</li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function CopyPrompt({ value }: { value: string }) {
+  return (
+    <div className="grid gap-2">
+      <textarea
+        className="min-h-28 resize-y rounded-[8px] border border-watch-line bg-watch-code px-2 py-1.5 font-mono text-[10.5px] leading-[1.45] text-watch-ink-2 outline-none"
+        readOnly
+        value={value}
+      />
+      <button
+        className="w-fit rounded-[7px] border border-watch-line bg-watch-panel px-2 py-1 font-mono text-[10px] uppercase tracking-[.08em] text-watch-ink-2 hover:border-watch-accent/50 hover:text-watch-accent"
+        onClick={() => void navigator.clipboard?.writeText(value)}
+        type="button"
+      >
+        Copy loop prompt
+      </button>
+    </div>
+  );
+}
+
 function EvidenceDetails({ rows }: { rows: EvidenceDetail[] }) {
   return (
     <div className="grid gap-2">
@@ -107,7 +253,7 @@ function EvidenceCard({ children, title, number, tone }: { children: ReactNode; 
   const titleClass = tone === 'intervention' ? 'text-status-intervention-title' : 'text-watch-ink';
 
   return (
-    <article className={`m-3 rounded-[10px] border p-3.5 shadow-watch-card ${toneClass}`}>
+    <article aria-label={title} className={`m-3 rounded-[10px] border p-3.5 shadow-watch-card ${toneClass}`}>
       <div className={`mb-3 flex items-center border-b border-watch-line pb-2 font-mono text-[10px] font-semibold uppercase tracking-[.1em] ${titleClass}`}>
         {title}
         <span className="ml-auto font-normal tracking-normal text-watch-ink-3">{number}</span>

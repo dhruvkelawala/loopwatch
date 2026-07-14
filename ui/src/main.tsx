@@ -10,19 +10,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { createEngineFetch, loadEngineRuntime } from './engine-runtime';
 import './styles.css';
 
-// In Vite dev, `/api` is proxied to the local Flue engine to avoid browser CORS.
-// In a production build the Tauri shell loads static assets from a non-HTTP
-// origin with no dev proxy, so default to the engine's local address instead.
-// `VITE_LOOPWATCH_FLUE_URL` overrides either default.
-const flueBaseUrl =
-  import.meta.env.VITE_LOOPWATCH_FLUE_URL ??
-  (import.meta.env.DEV ? '/api' : 'http://127.0.0.1:3583');
-const client = createFlueClient({
-  baseUrl: flueBaseUrl,
-  fetch: (input, init) => fetch(input, init),
-});
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -32,11 +22,18 @@ const queryClient = new QueryClient({
   },
 });
 
-createRoot(document.getElementById('root')!).render(
+const root = createRoot(document.getElementById('root')!);
+const runtime = await loadEngineRuntime();
+const client = createFlueClient({
+  baseUrl: runtime.flueBaseUrl,
+  fetch: createEngineFetch(runtime),
+});
+
+root.render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <FlueProvider client={client}>
-        <App flueBaseUrl={flueBaseUrl} />
+        <App engineRuntime={runtime} />
       </FlueProvider>
     </QueryClientProvider>
   </StrictMode>,

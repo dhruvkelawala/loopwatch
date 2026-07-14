@@ -1,26 +1,46 @@
+import { timingSafeEqual } from 'node:crypto';
 import { getRun, listRuns, type RunPointer } from '@flue/runtime';
 import { flue } from '@flue/runtime/routing';
-import { Hono } from 'hono';
+import { Hono, type MiddlewareHandler } from 'hono';
 import { cors } from 'hono/cors';
+import { configureLoopwatchCodexOAuth, createLoopwatchCodexOAuthIntegration, loopwatchCodexOAuthSnapshot } from './codex-oauth.js';
+import { buildConvergenceSnapshot, convergenceConfigFromEnv } from './convergence.js';
+import { buildScopedGitEvidenceEvents } from './git-watch.js';
+import { addUserLoop, loadLoopLibrary, LoopSchema, recommendLoopFromLibrary } from './loops.js';
 import { LoopwatchEventSchema, sessionKey, type LoopwatchEvent } from './events.js';
-import { LOOPWATCH_EVENT_WORKFLOWS, LoopwatchRunsQuerySchema } from './schemas/loopwatch.js';
+import { applyModelJudges, modelJudgeOptionsFromEnv } from './model-judge.js';
+import { LOOPWATCH_EVENT_WORKFLOWS, LoopwatchConvergenceQuerySchema, LoopwatchLoopRecommendationQuerySchema, LoopwatchRunsQuerySchema } from './schemas/loopwatch.js';
 
 const app = new Hono();
 
 const RUN_LIST_PAGE_SIZE = 500;
 const ACTIVE_SESSION_HISTORY_MS = 30 * 60_000;
+const ENGINE_EXPOSED_HEADERS = ['Stream-Next-Offset', 'Stream-Up-To-Date', 'Stream-Closed', 'Stream-Cursor', 'ETag', 'Location'];
+const DEFAULT_ENGINE_ALLOWED_ORIGINS = ['tauri://localhost', 'http://tauri.localhost', 'http://127.0.0.1:1420', 'http://localhost:1420'];
+const LOOPBACK_HOSTS: Record<string, true> = { '127.0.0.1': true, localhost: true };
 const runEventCache = new Map<string, LoopwatchEvent[]>();
+const codexOAuth = createLoopwatchCodexOAuthIntegration();
+await configureLoopwatchCodexOAuth(codexOAuth);
 
-// The packaged Tauri shell serves the Cockpit UI from a non-HTTP origin, so the
-// webview reaches this localhost engine cross-origin. Allow the Tauri webview
-// origins; in dev the UI uses the same-origin Vite proxy and needs no CORS.
+// Issue #22: the local engine is private session state. Keep the unauthenticated
+// dev mode for existing scripts, but when the Tauri launcher supplies a per-run
+// token every route (including mounted Flue routes) must pass Host/Origin and
+// bearer-token checks before the router observes it.
+app.use('*', enforceEngineBoundary);
+
 app.use(
   '*',
   cors({
-    origin: ['tauri://localhost', 'http://tauri.localhost'],
-    exposeHeaders: ['Stream-Next-Offset', 'Stream-Up-To-Date', 'Stream-Closed', 'Stream-Cursor', 'ETag', 'Location'],
+    origin: (origin) => (isAllowedEngineOrigin(origin) ? origin : ''),
+    allowHeaders: ['Authorization', 'Content-Type'],
+    allowMethods: ['GET', 'POST', 'OPTIONS'],
+    exposeHeaders: ENGINE_EXPOSED_HEADERS,
   }),
 );
+
+if (codexOAuth.enabled) {
+  app.use('*', codexOAuth.auth.middleware() as MiddlewareHandler);
+}
 
 app.get('/health', (c) =>
   c.json({
@@ -29,6 +49,8 @@ app.get('/health', (c) =>
     target: 'node',
   }),
 );
+
+app.get('/loopwatch/codex-auth', (c) => c.json({ ok: true, ...loopwatchCodexOAuthSnapshot(codexOAuth) }));
 
 /**
  * App-owned inspection endpoint for the Cockpit.
@@ -58,7 +80,153 @@ app.get('/loopwatch/runs', async (c) => {
   return c.json({ ok: true, runs, nextPollMs: 1000 });
 });
 
+app.get('/loopwatch/convergence', async (c) => {
+  const parsed = LoopwatchConvergenceQuerySchema.safeParse({
+    limit: c.req.query('limit') ?? undefined,
+    scanLimit: c.req.query('scanLimit') ?? undefined,
+    pivotMode: c.req.query('pivotMode') ?? undefined,
+  });
+  if (!parsed.success) {
+    return c.json({ ok: false, error: 'invalid_request', issues: parsed.error.issues }, 400);
+  }
+
+  const config = convergenceConfigFromEnv();
+  const nowMs = Date.now();
+  const runs = await buildLoopwatchRunIndex(parsed.data.limit, parsed.data.scanLimit);
+  const eventGroups = await Promise.all(runs.map((run) => recordedEventsForRun(run)));
+  const recordedEvents = eventGroups.flat();
+  const gitEvents = await buildScopedGitEvidenceEvents(recordedEvents, { nowMs, activeAfterMs: config.idleAfterMs, cacheTtlMs: 1_500 });
+  const library = await loadLoopLibrary();
+  const snapshot = buildConvergenceSnapshot([...recordedEvents, ...gitEvents], { ...config, pivotMode: parsed.data.pivotMode ?? config.pivotMode, nowMs, loopAnchoring: { loops: library.loops } });
+  const judgedSnapshot = await applyModelJudges(snapshot, [...recordedEvents, ...gitEvents], modelJudgeOptionsFromEnv());
+
+  return c.json({ ok: true, ...judgedSnapshot });
+});
+
+app.get('/loopwatch/loops', async (c) => {
+  const library = await loadLoopLibrary();
+  return c.json(library);
+});
+
+app.get('/loopwatch/loops/recommend', async (c) => {
+  const parsed = LoopwatchLoopRecommendationQuerySchema.safeParse({
+    task: c.req.query('task') ?? undefined,
+  });
+  if (!parsed.success) {
+    return c.json({ ok: false, error: 'invalid_request', issues: parsed.error.issues }, 400);
+  }
+
+  const recommendation = await recommendLoopFromLibrary(parsed.data.task);
+  return c.json(recommendation);
+});
+
+app.post('/loopwatch/loops', async (c) => {
+  let body: unknown;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ ok: false, error: 'invalid_request' }, 400);
+  }
+
+  const parsed = LoopSchema.safeParse(body);
+  if (!parsed.success) {
+    return c.json({ ok: false, error: 'invalid_request', issues: parsed.error.issues }, 400);
+  }
+
+  const loop = await addUserLoop(parsed.data);
+  return c.json({ ok: true, loop }, 201);
+});
+
 app.route('/', flue());
+
+async function enforceEngineBoundary(c: Parameters<MiddlewareHandler>[0], next: Parameters<MiddlewareHandler>[1]): Promise<Response | void> {
+  const host = requestAuthority(c.req.raw);
+  if (!isAllowedEngineHost(host)) {
+    return c.json({ ok: false, error: 'forbidden_host' }, 403);
+  }
+
+  const origin = c.req.header('origin');
+  if (origin !== undefined && !isAllowedEngineOrigin(origin)) {
+    return c.json({ ok: false, error: 'forbidden_origin' }, 403);
+  }
+
+  const token = configuredEngineToken();
+  if (token !== undefined && c.req.method !== 'OPTIONS' && !authorizationMatches(c.req.header('authorization'), token)) {
+    return c.json({ ok: false, error: 'unauthorized' }, 401);
+  }
+
+  await next();
+}
+
+function requestAuthority(request: Request): string {
+  return request.headers.get('host') ?? new URL(request.url).host;
+}
+
+function isAllowedEngineHost(authority: string): boolean {
+  const normalized = normalizeAuthority(authority);
+  const configuredHosts = csvEnv('LOOPWATCH_ENGINE_ALLOWED_HOSTS').map(normalizeAuthority);
+  if (configuredHosts.length > 0) return configuredHosts.includes(normalized);
+
+  const parsed = parseAuthority(normalized);
+  return parsed !== undefined && LOOPBACK_HOSTS[parsed.hostname] === true && parsed.port === expectedEnginePort();
+}
+
+function parseAuthority(authority: string): { hostname: string; port: string } | undefined {
+  try {
+    const url = new URL(`http://${authority}`);
+    return {
+      hostname: url.hostname.replace(/\.$/, '').toLowerCase(),
+      port: url.port,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function expectedEnginePort(): string {
+  return process.env.PORT ?? process.env.LOOPWATCH_ENGINE_PORT ?? '3000';
+}
+
+function normalizeAuthority(authority: string): string {
+  return authority.trim().toLowerCase().replace(/\.$/, '');
+}
+
+function isAllowedEngineOrigin(origin: string): boolean {
+  const normalized = normalizeOrigin(origin);
+  if (normalized === undefined) return false;
+  return [...DEFAULT_ENGINE_ALLOWED_ORIGINS, ...csvEnv('LOOPWATCH_ENGINE_ALLOWED_ORIGINS')].includes(normalized);
+}
+
+function normalizeOrigin(origin: string): string | undefined {
+  try {
+    const url = new URL(origin);
+    return `${url.protocol}//${url.host}`.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+function configuredEngineToken(): string | undefined {
+  const token = process.env.LOOPWATCH_ENGINE_TOKEN?.trim();
+  return token ? token : undefined;
+}
+
+function authorizationMatches(authorization: string | undefined, token: string): boolean {
+  return constantTimeEqual(authorization ?? '', `Bearer ${token}`);
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const leftBytes = Buffer.from(left);
+  const rightBytes = Buffer.from(right);
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+}
+
+function csvEnv(name: string): string[] {
+  return (process.env[name] ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+}
 
 async function buildLoopwatchRunIndex(limit: number, scanLimit: number): Promise<RunPointer[]> {
   const scannedRuns = await listLoopwatchRuns(Math.max(limit, scanLimit));

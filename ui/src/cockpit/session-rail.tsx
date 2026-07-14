@@ -12,6 +12,7 @@ export function SessionRail({
   onSelect: (id: string) => void;
 }) {
   const count = groupedSessions.reduce((sum, group) => sum + group.sessions.length, 0);
+  const sources = [...new Set(groupedSessions.flatMap((group) => group.sessions.map((session) => session.source)))].sort();
 
   return (
     <aside className="flex min-h-0 flex-col overflow-hidden border-r border-watch-line bg-watch-bg-side">
@@ -25,9 +26,10 @@ export function SessionRail({
           <EmptyRail />
         ) : (
           groupedSessions.map((group) => (
-            <section className="mt-1.5" key={group.repo}>
+            <section className="mt-1.5" key={group.key}>
               <div className="flex items-center gap-1.5 px-3.5 py-1 font-mono text-[10px] text-watch-ink-3">
-                {group.repo}
+                <span className="truncate">{group.repo}</span>
+                <SourceBadge label={group.source} />
                 <span className="ml-auto opacity-60">{group.sessions.length}</span>
               </div>
               {group.sessions.map((session) => (
@@ -109,7 +111,7 @@ function SessionRow({ session, selected, onSelect }: { session: SessionView; sel
           {session.source} · {session.repo} · {session.branch}
           {session.branchInferred ? <span className="text-watch-ink-3" title="branch inferred from git"> ~git</span> : null}
         </span>
-        <span className="mt-1 block truncate font-mono text-[10px] text-watch-ink-2">phase · {session.phase}</span>
+        <span className="mt-1 block truncate font-mono text-[10px] text-watch-ink-2">phase · {session.phase} · freshness · {session.freshness}</span>
         <span className="mt-1.5 block">
           <CapabilityBadges capabilities={session.capabilities} />
         </span>
@@ -120,5 +122,26 @@ function SessionRow({ session, selected, onSelect }: { session: SessionView; sel
         <LivenessPill liveness={session.liveness} />
       </span>
     </button>
+  );
+}
+
+function SourceBadge({ label }: { label: string }) {
+  return (
+    <span className="rounded-[5px] border border-watch-accent/30 bg-watch-accent/12 px-1.5 py-0.5 font-mono text-[9px] text-watch-accent">
+      {label}
+    </span>
+  );
+}
+
+function CapabilityBadge({ label, state, title }: { label: string; state: 'available' | 'unavailable'; title: string }) {
+  const stateClass =
+    state === 'available'
+      ? 'border-watch-accent/24 bg-watch-accent/10 text-watch-accent'
+      : 'border-watch-line bg-watch-panel text-watch-ink-3';
+
+  return (
+    <span className={`rounded-[5px] border px-1.5 py-0.5 font-mono text-[9px] ${stateClass}`} title={title}>
+      {state === 'available' ? label : `${label} unavailable`}
+    </span>
   );
 }

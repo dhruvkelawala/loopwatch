@@ -10,21 +10,10 @@
     "frontendDist": "../ui/dist"
   },
   "app": {
-    "windows": [
-      {
-        "label": "cockpit",
-        "title": "Loopwatch Cockpit",
-        "width": 1280,
-        "height": 760,
-        "minWidth": 760,
-        "minHeight": 620,
-        "resizable": true,
-        "fullscreen": false
-      }
-    ],
+    "windows": [],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' http://127.0.0.1:3583",
-      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' http://127.0.0.1:3583 http://127.0.0.1:1420 ws://127.0.0.1:1420"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' http://127.0.0.1:*",
+      "devCsp": "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' http://127.0.0.1:* ws://127.0.0.1:1420"
     }
   },
   "bundle": {

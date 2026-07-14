@@ -1,5 +1,9 @@
+mod alerting;
 use std::{
     env,
+    fmt::Write as FmtWrite,
+    fs, io,
+    net::TcpListener,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::Mutex,
@@ -9,41 +13,36 @@ use std::{
 
 use tauri::{Manager, RunEvent, WindowEvent};
 
-/// Window label for the Cockpit, declared in `tauri.conf.json`.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-const COCKPIT_WINDOW_LABEL: &str = "cockpit";
+/// Development port kept stable so the Vite proxy can reach the engine during
+/// `tauri dev`; release launches reserve an ephemeral localhost port.
+const DEV_ENGINE_PORT: u16 = 3583;
+const ENGINE_TOKEN_BYTES: usize = 32;
 
-/// Fixed port the Flue engine listens on. The packaged webview's base URL
-/// (`ui/src/main.tsx`) and the CSP `connect-src` (`tauri.conf.json`) are pinned
-/// to this port, so it is intentionally not user-overridable.
-const ENGINE_PORT: &str = "3583";
-
-/// A supervised Source Adapter: its display label, built artifact, and the env
-/// switch that disables it in local diagnostics. Each adapter tails one
-/// source's on-disk sessions and ingests normalized events (issue #11).
-struct AdapterSpec {
-    label: &'static str,
-    artifact: &'static str,
-    env: &'static str,
+/// Env switch for disabling the supervised source-adapters child in local
+/// diagnostics. Per-source switches (`LOOPWATCH_{CLAUDE,CODEX,PI}_ADAPTER`)
+/// are honored inside the Node supervisor (scripts/adapter-sources.ts), which
+/// inherits this process's environment.
+const SOURCE_ADAPTERS_ENV: &str = "LOOPWATCH_SOURCE_ADAPTERS";
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EngineLaunchConfig {
+    port: u16,
+    token: String,
 }
 
-/// The adapters the shell supervises. All enabled by default; set the matching
-/// env var to `0`/`false`/`off`/`no` to disable one.
-const ADAPTERS: &[AdapterSpec] = &[
-    AdapterSpec { label: "Claude adapter", artifact: "dist/adapter-claude.mjs", env: "LOOPWATCH_CLAUDE_ADAPTER" },
-    AdapterSpec { label: "Codex adapter", artifact: "dist/adapter-codex.mjs", env: "LOOPWATCH_CODEX_ADAPTER" },
-    AdapterSpec { label: "Pi adapter", artifact: "dist/adapter-pi.mjs", env: "LOOPWATCH_PI_ADAPTER" },
-];
+impl EngineLaunchConfig {
+    fn base_url(&self) -> String {
+        format!("http://127.0.0.1:{}", self.port)
+    }
 
-/// A running adapter child paired with its label, for orderly shutdown logging.
-struct AdapterChild {
-    label: String,
-    child: Child,
+    fn allowed_hosts(&self) -> String {
+        format!("127.0.0.1:{},localhost:{}", self.port, self.port)
+    }
 }
 
 struct BackgroundProcesses {
+    engine_config: EngineLaunchConfig,
     engine: Mutex<Option<Child>>,
-    adapters: Mutex<Vec<AdapterChild>>,
+    source_adapters: Mutex<Option<Child>>,
 }
 
 impl BackgroundProcesses {
@@ -53,21 +52,8 @@ impl BackgroundProcesses {
     /// the engine handle is taken out, so later calls (e.g. the `Drop`
     /// fallback) become no-ops.
     fn stop(&self) {
-        self.stop_adapters();
+        self.stop_child("Source adapters", &self.source_adapters);
         self.stop_child("Flue engine", &self.engine);
-    }
-
-    /// Terminate every supervised adapter, then clear the list so a second call
-    /// (the `Drop` fallback) is a no-op.
-    fn stop_adapters(&self) {
-        let mut adapters = match self.adapters.lock() {
-            Ok(adapters) => adapters,
-            Err(poisoned) => poisoned.into_inner(),
-        };
-        for adapter in adapters.iter_mut() {
-            terminate_child(&adapter.label, &mut adapter.child);
-        }
-        adapters.clear();
     }
 
     fn stop_child(&self, label: &str, slot: &Mutex<Option<Child>>) {
@@ -132,7 +118,14 @@ impl Drop for BackgroundProcesses {
 fn main() {
     let app = tauri::Builder::default()
         .setup(|app| {
-            app.manage(spawn_background_processes()?);
+            let processes = spawn_background_processes()?;
+            let alerting_config = alerting::EngineAlertingConfig::new(
+                processes.engine_config.base_url(),
+                processes.engine_config.token.clone(),
+            );
+            create_cockpit_window(app, &processes.engine_config)?;
+            app.manage(processes);
+            alerting::setup_layered_alerting(app, alerting_config)?;
             Ok(())
         })
         .on_window_event(handle_window_event)
@@ -143,7 +136,10 @@ fn main() {
         // Clicking the dock icon (macOS "reopen") brings the hidden Cockpit back.
         #[cfg(target_os = "macos")]
         RunEvent::Reopen { .. } => {
-            show_cockpit(app_handle);
+            let session_id = app_handle
+                .state::<alerting::LayeredAlertingState>()
+                .last_intervention_session();
+            alerting::show_cockpit_for_session(app_handle, session_id.as_deref());
         }
         // An explicit quit (Cmd+Q) tears the children down before the process exits.
         // `Drop` covers any exit path that skips this event.
@@ -162,7 +158,7 @@ fn main() {
 #[cfg(target_os = "macos")]
 fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
     if let WindowEvent::CloseRequested { api, .. } = event {
-        if window.label() == COCKPIT_WINDOW_LABEL {
+        if window.label() == alerting::COCKPIT_WINDOW_LABEL {
             api.prevent_close();
             if let Err(error) = window.hide() {
                 eprintln!("[loopwatch] failed to hide Cockpit window: {error}");
@@ -174,47 +170,135 @@ fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
 #[cfg(not(target_os = "macos"))]
 fn handle_window_event(_window: &tauri::Window, _event: &WindowEvent) {}
 
-#[cfg(target_os = "macos")]
-fn show_cockpit(app_handle: &tauri::AppHandle) {
-    let Some(window) = app_handle.get_webview_window(COCKPIT_WINDOW_LABEL) else {
-        return;
+fn build_engine_launch_config() -> Result<EngineLaunchConfig, Box<dyn std::error::Error>> {
+    let port = match env::var("LOOPWATCH_ENGINE_PORT") {
+        Ok(raw) => parse_engine_port(&raw)?,
+        Err(_) if cfg!(debug_assertions) => DEV_ENGINE_PORT,
+        Err(_) => reserve_ephemeral_loopback_port()?,
     };
-    if let Err(error) = window.show() {
-        eprintln!("[loopwatch] failed to show Cockpit window: {error}");
+    let token = match env::var("LOOPWATCH_ENGINE_TOKEN") {
+        Ok(raw) if !raw.trim().is_empty() => raw.trim().to_string(),
+        _ => generate_engine_token()?,
+    };
+
+    Ok(EngineLaunchConfig { port, token })
+}
+
+fn parse_engine_port(raw: &str) -> Result<u16, Box<dyn std::error::Error>> {
+    let port = raw.parse::<u16>()?;
+    if port == 0 {
+        return Err("LOOPWATCH_ENGINE_PORT must be between 1 and 65535".into());
     }
-    if let Err(error) = window.set_focus() {
-        eprintln!("[loopwatch] failed to focus Cockpit window: {error}");
+    Ok(port)
+}
+
+fn reserve_ephemeral_loopback_port() -> Result<u16, Box<dyn std::error::Error>> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    Ok(listener.local_addr()?.port())
+}
+
+fn generate_engine_token() -> Result<String, Box<dyn std::error::Error>> {
+    let mut bytes = [0_u8; ENGINE_TOKEN_BYTES];
+    getrandom::getrandom(&mut bytes).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("failed to generate engine token: {error}"),
+        )
+    })?;
+
+    let mut token = String::with_capacity(ENGINE_TOKEN_BYTES * 2);
+    for byte in bytes {
+        write!(&mut token, "{byte:02x}")?;
     }
+    Ok(token)
+}
+
+/// Create the Cockpit window with the engine runtime config injected as
+/// `window.__LOOPWATCH_ENGINE_CONFIG__` via an initialization script that runs
+/// before any page script. A disk file cannot carry this config in release
+/// builds: Tauri embeds `frontendDist` into the binary at compile time, so a
+/// `loopwatch-runtime.json` written at launch is invisible to the packaged
+/// webview (and the engine port/token only exist at launch).
+fn create_cockpit_window(
+    app: &tauri::App,
+    engine_config: &EngineLaunchConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let init_script = format!(
+        "window.__LOOPWATCH_ENGINE_CONFIG__ = {};",
+        runtime_config_json(engine_config, cfg!(debug_assertions))
+    );
+
+    tauri::WebviewWindowBuilder::new(
+        app,
+        alerting::COCKPIT_WINDOW_LABEL,
+        tauri::WebviewUrl::default(),
+    )
+    .title("Loopwatch Cockpit")
+    .inner_size(1280.0, 760.0)
+    .min_inner_size(760.0, 620.0)
+    .initialization_script(&init_script)
+    .build()?;
+
+    Ok(())
+}
+
+/// Older builds wrote the engine token into `ui/{dist,public}/loopwatch-runtime.json`.
+/// Remove any leftovers so a stale token file is never served by the Vite dev
+/// server or embedded into a later `ui:build`. Best-effort: a missing file or
+/// read-only tree must not block launch.
+fn remove_stale_runtime_config(project_root: &Path) {
+    for path in [
+        project_root.join("ui/dist/loopwatch-runtime.json"),
+        project_root.join("ui/public/loopwatch-runtime.json"),
+    ] {
+        if let Err(error) = fs::remove_file(&path) {
+            if error.kind() != io::ErrorKind::NotFound {
+                eprintln!(
+                    "[loopwatch] failed to remove stale runtime config {}: {error}",
+                    path.display()
+                );
+            }
+        }
+    }
+}
+
+fn runtime_config_json(engine_config: &EngineLaunchConfig, use_vite_proxy: bool) -> String {
+    let base_url = if use_vite_proxy {
+        "/api".to_string()
+    } else {
+        engine_config.base_url()
+    };
+    serde_json::json!({
+        "baseUrl": base_url,
+        "bearerToken": engine_config.token,
+    })
+    .to_string()
 }
 
 fn spawn_background_processes() -> Result<BackgroundProcesses, Box<dyn std::error::Error>> {
     let project_root = project_root()?;
-    let mut engine = spawn_flue_engine(&project_root)?;
-    let mut adapters: Vec<AdapterChild> = Vec::new();
-
-    for spec in ADAPTERS {
-        match spawn_adapter(&project_root, spec) {
-            Ok(Some(child)) => adapters.push(AdapterChild { label: spec.label.to_string(), child }),
-            Ok(None) => {}
-            Err(error) => {
-                // One adapter failing to start tears the whole launch down so we
-                // never leave a half-supervised set of children orphaned.
-                for adapter in adapters.iter_mut() {
-                    terminate_child(&adapter.label, &mut adapter.child);
-                }
-                terminate_child("Flue engine", &mut engine);
-                return Err(error);
-            }
+    let engine_config = build_engine_launch_config()?;
+    remove_stale_runtime_config(&project_root);
+    let mut engine = spawn_flue_engine(&project_root, &engine_config)?;
+    let source_adapters = match spawn_source_adapters(&project_root, &engine_config) {
+        Ok(adapter) => adapter,
+        Err(error) => {
+            terminate_child("Flue engine", &mut engine);
+            return Err(error);
         }
-    }
+    };
 
     Ok(BackgroundProcesses {
+        engine_config,
         engine: Mutex::new(Some(engine)),
-        adapters: Mutex::new(adapters),
+        source_adapters: Mutex::new(source_adapters),
     })
 }
 
-fn spawn_flue_engine(project_root: &Path) -> Result<Child, Box<dyn std::error::Error>> {
+fn spawn_flue_engine(
+    project_root: &Path,
+    engine_config: &EngineLaunchConfig,
+) -> Result<Child, Box<dyn std::error::Error>> {
     let server_path = project_root.join("dist/server.mjs");
     if !server_path.exists() {
         return Err(format!(
@@ -228,7 +312,12 @@ fn spawn_flue_engine(project_root: &Path) -> Result<Child, Box<dyn std::error::E
     let mut child = Command::new(node_bin)
         .arg(&server_path)
         .current_dir(project_root)
-        .env("PORT", ENGINE_PORT)
+        .env("PORT", engine_config.port.to_string())
+        .env("LOOPWATCH_ENGINE_TOKEN", &engine_config.token)
+        .env(
+            "LOOPWATCH_ENGINE_ALLOWED_HOSTS",
+            engine_config.allowed_hosts(),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -237,31 +326,34 @@ fn spawn_flue_engine(project_root: &Path) -> Result<Child, Box<dyn std::error::E
     thread::sleep(Duration::from_millis(250));
     if let Some(status) = child.try_wait()? {
         return Err(format!(
-            "Flue engine exited during startup with status {status}. Is port {ENGINE_PORT} already in use?"
+            "Flue engine exited during startup with status {status}. Is port {} already in use?",
+            engine_config.port
         )
         .into());
     }
 
     println!(
-        "[loopwatch] spawned Flue engine pid={} on http://127.0.0.1:{}",
+        "[loopwatch] spawned Flue engine pid={} on {}",
         child.id(),
-        ENGINE_PORT
+        engine_config.base_url()
     );
 
     Ok(child)
 }
 
-fn spawn_adapter(project_root: &Path, spec: &AdapterSpec) -> Result<Option<Child>, Box<dyn std::error::Error>> {
-    if !adapter_enabled(spec.env) {
-        println!("[loopwatch] {} disabled by {}", spec.label, spec.env);
+fn spawn_source_adapters(
+    project_root: &Path,
+    engine_config: &EngineLaunchConfig,
+) -> Result<Option<Child>, Box<dyn std::error::Error>> {
+    if !source_adapters_enabled() {
+        println!("[loopwatch] Source adapters disabled by {SOURCE_ADAPTERS_ENV}");
         return Ok(None);
     }
 
-    let adapter_path = project_root.join(spec.artifact);
+    let adapter_path = project_root.join("dist/adapter-sources.mjs");
     if !adapter_path.exists() {
         return Err(format!(
-            "{} artifact is missing at {}. Run `pnpm build` before launching Loopwatch.",
-            spec.label,
+            "Source adapter artifact is missing at {}. Run `pnpm build` before launching Loopwatch.",
             adapter_path.display()
         )
         .into());
@@ -271,7 +363,8 @@ fn spawn_adapter(project_root: &Path, spec: &AdapterSpec) -> Result<Option<Child
     let mut child = Command::new(node_bin)
         .arg(&adapter_path)
         .current_dir(project_root)
-        .env("LOOPWATCH_SERVER_URL", format!("http://127.0.0.1:{ENGINE_PORT}"))
+        .env("LOOPWATCH_SERVER_URL", engine_config.base_url())
+        .env("LOOPWATCH_ENGINE_TOKEN", &engine_config.token)
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
@@ -279,17 +372,20 @@ fn spawn_adapter(project_root: &Path, spec: &AdapterSpec) -> Result<Option<Child
 
     thread::sleep(Duration::from_millis(250));
     if let Some(status) = child.try_wait()? {
-        return Err(format!("{} exited during startup with status {status}.", spec.label).into());
+        return Err(format!("Source adapters exited during startup with status {status}.").into());
     }
 
-    println!("[loopwatch] spawned {} pid={}", spec.label, child.id());
+    println!("[loopwatch] spawned Source adapters pid={}", child.id());
 
     Ok(Some(child))
 }
 
-fn adapter_enabled(var: &str) -> bool {
-    match env::var(var) {
-        Ok(value) => !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "off" | "no"),
+fn source_adapters_enabled() -> bool {
+    match env::var(SOURCE_ADAPTERS_ENV) {
+        Ok(value) => !matches!(
+            value.to_ascii_lowercase().as_str(),
+            "0" | "false" | "off" | "no"
+        ),
         Err(_) => true,
     }
 }

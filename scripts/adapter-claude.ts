@@ -7,6 +7,7 @@
  *
  * Env overrides:
  *   LOOPWATCH_SERVER_URL   server base URL          (default http://127.0.0.1:3583)
+ *   LOOPWATCH_ENGINE_TOKEN bearer token for secured engine requests (optional)
  *   CLAUDE_PROJECTS_ROOT   transcript root          (default ~/.claude/projects)
  *   LOOPWATCH_POLL_MS      poll interval ms         (default 1000)
  *   LOOPWATCH_ANCHOR       'end' | 'start'          (default end — tail new activity only)
@@ -30,8 +31,10 @@ const root = process.env.CLAUDE_PROJECTS_ROOT ?? CLAUDE_PROJECTS_ROOT;
 const pollMs = Math.max(1, numEnv('LOOPWATCH_POLL_MS', 1000));
 const initialAnchor = process.env.LOOPWATCH_ANCHOR === 'start' ? 'start' : 'end';
 
+const engineToken = process.env.LOOPWATCH_ENGINE_TOKEN;
+
 const adapter = new ClaudeAdapter({
-  ingest: httpIngest(serverUrl),
+  ingest: httpIngest(serverUrl, { token: engineToken }),
   root,
   initialAnchor,
   thresholds: {
