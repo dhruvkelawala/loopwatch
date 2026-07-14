@@ -74,7 +74,7 @@ export interface ConvergenceSpend {
 }
 
 export interface JudgeCadence {
-  provider: 'deterministic-fake-v1';
+  provider: string;
   lastTier?: JudgeTier;
   lastRunAt?: string;
   nextEligibleAt?: string;

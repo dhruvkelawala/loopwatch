@@ -82,6 +82,16 @@ pnpm exec flue-codex-login --auth-path ~/.flue/openai-codex.json
 
 By default, Loopwatch auto-enables the provider only when that auth file exists. Force it on or off with `LOOPWATCH_CODEX_OAUTH=1` / `LOOPWATCH_CODEX_OAUTH=0`, and override the file path with `FLUE_CODEX_AUTH_PATH`. The app exposes a same-engine-boundary status endpoint at `/loopwatch/codex-auth`; it reports checks/status only, never token material.
 
+Use Codex as the live convergence judge:
+
+```sh
+LOOPWATCH_CONVERGENCE_JUDGE=model \
+LOOPWATCH_JUDGE_MODEL=openai-codex/gpt-5.5 \
+pnpm tauri:dev
+```
+
+Without `LOOPWATCH_CONVERGENCE_JUDGE=model`, the watcher keeps using the deterministic local judge for offline/test runs.
+
 Run the deterministic integration proof:
 
 ```sh

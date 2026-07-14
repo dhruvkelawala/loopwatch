@@ -151,7 +151,7 @@ export const SessionConvergenceSchema = z.object({
   summary: RunningSummarySchema,
   evidence: z.array(ConvergenceEvidenceRefSchema),
   judge: z.object({
-    provider: z.literal('deterministic-fake-v1'),
+    provider: z.string().min(1),
     lastTier: z.enum(['cheap', 'strong']).optional(),
     lastRunAt: z.string().optional(),
     nextEligibleAt: z.string().optional(),

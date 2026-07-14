@@ -8,6 +8,7 @@ import { buildConvergenceSnapshot, convergenceConfigFromEnv } from './convergenc
 import { buildScopedGitEvidenceEvents } from './git-watch.js';
 import { addUserLoop, loadLoopLibrary, LoopSchema, recommendLoopFromLibrary } from './loops.js';
 import { LoopwatchEventSchema, sessionKey, type LoopwatchEvent } from './events.js';
+import { applyModelJudges, modelJudgeOptionsFromEnv } from './model-judge.js';
 import { LOOPWATCH_EVENT_WORKFLOWS, LoopwatchConvergenceQuerySchema, LoopwatchLoopRecommendationQuerySchema, LoopwatchRunsQuerySchema } from './schemas/loopwatch.js';
 
 const app = new Hono();
@@ -97,8 +98,9 @@ app.get('/loopwatch/convergence', async (c) => {
   const gitEvents = await buildScopedGitEvidenceEvents(recordedEvents, { nowMs, activeAfterMs: config.idleAfterMs, cacheTtlMs: 1_500 });
   const library = await loadLoopLibrary();
   const snapshot = buildConvergenceSnapshot([...recordedEvents, ...gitEvents], { ...config, pivotMode: parsed.data.pivotMode ?? config.pivotMode, nowMs, loopAnchoring: { loops: library.loops } });
+  const judgedSnapshot = await applyModelJudges(snapshot, [...recordedEvents, ...gitEvents], modelJudgeOptionsFromEnv());
 
-  return c.json({ ok: true, ...snapshot });
+  return c.json({ ok: true, ...judgedSnapshot });
 });
 
 app.get('/loopwatch/loops', async (c) => {

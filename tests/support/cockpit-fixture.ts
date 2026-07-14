@@ -102,7 +102,7 @@ const ConvergenceSessionSchema = z.object({
   summary: ConvergenceSummarySchema,
   evidence: z.array(ConvergenceEvidenceSchema),
   judge: z.object({
-    provider: z.literal('deterministic-fake-v1'),
+    provider: z.string().min(1),
     lastTier: z.enum(['cheap', 'strong']).optional(),
     lastRunAt: z.string().optional(),
     nextEligibleAt: z.string().optional(),
